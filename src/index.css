@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply bg-app-bg font-sans text-tx;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Remove tap highlight on mobile */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Hide scrollbar but allow scrolling */
+  ::-webkit-scrollbar { display: none; }
+  * { scrollbar-width: none; }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface rounded-card border border-black/10 p-4;
+  }
+
+  .btn-primary {
+    @apply bg-brand-yellow text-brand-dark font-semibold rounded-pill py-3 px-6 w-full text-center text-sm active:scale-95 transition-transform;
+  }
+
+  .badge {
+    @apply inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full;
+  }
+
+  .section-label {
+    @apply text-[10px] font-bold uppercase tracking-widest text-tx-3 mb-2;
+  }
+
+  /* Safe area padding for phones with notches */
+  .safe-top    { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+}
