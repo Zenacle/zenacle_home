@@ -189,10 +189,15 @@ export default function Energy() {
   if (viewMode === 'Daily') {
     navLabel = new Date(selectedDateStr).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
   } else if (viewMode === 'Weekly') {
-    const dEnd = new Date(selectedDateStr)
-    const dStart = new Date(selectedDateStr)
-    dStart.setDate(dStart.getDate() - 6)
-    navLabel = `${dStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${dEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+    const d = new Date(selectedDateStr + 'T00:00:00')
+    const day = d.getDay()
+    const diff = (day === 0 ? -6 : 1) - day
+    const monday = new Date(d)
+    monday.setDate(d.getDate() + diff)
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+    
+    navLabel = `${monday.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${sunday.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
   } else if (viewMode === 'Billing Cycle') {
     if (data?.billing?.cycle_start && data?.billing?.cycle_end) {
       const bStart = new Date(data.billing.cycle_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
@@ -236,9 +241,20 @@ export default function Energy() {
   }
 
   const billing = data?.billing
-  const cycleDay = billing?.cycle_start ? Math.floor((new Date() - new Date(billing.cycle_start)) / (1000 * 60 * 60 * 24)) + 1 : '—'
-  const startFmt = billing?.cycle_start ? new Date(billing.cycle_start).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'
-  const endFmt = billing?.cycle_end ? new Date(billing.cycle_end).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'
+  const cycleStart = billing?.cycle_start ? new Date(billing.cycle_start) : null
+  const cycleEnd = billing?.cycle_end ? new Date(billing.cycle_end) : null
+  const currentTime = isTodayStr ? new Date() : new Date(selectedDateStr)
+  
+  const cycleDay = (cycleStart && cycleEnd)
+    ? Math.min(Math.floor((currentTime - cycleStart) / (1000 * 60 * 60 * 24)) + 1, Math.floor((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24)) + 1)
+    : '—'
+    
+  const startFmt = cycleStart ? cycleStart.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: new Date().getFullYear() !== cycleStart.getFullYear() ? 'numeric' : undefined }) : '—'
+  const endFmt = cycleEnd ? cycleEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: new Date().getFullYear() !== cycleEnd.getFullYear() ? 'numeric' : undefined }) : '—'
+  
+  const daysLeft = cycleEnd 
+    ? Math.max(0, Math.ceil((cycleEnd - currentTime) / (1000 * 60 * 60 * 24)))
+    : '—'
 
   const cmpStatus = isTodayStr ? 'highest' : d.kwh < 13 ? 'below' : 'average'
 
@@ -516,6 +532,7 @@ export default function Energy() {
         viewMode={viewMode} 
         householdId={household?.id}
         cycleStart={data?.billing?.cycle_start}
+        cycleEnd={data?.billing?.cycle_end}
         slabCrossingDate={data?.billing?.slab_crossing_date}
         selectedDate={selectedDateStr}
       />
@@ -525,7 +542,7 @@ export default function Energy() {
       <div className="e-card">
         <div className="e-row" style={{ marginBottom: 2 }}>
           <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{startFmt} – {endFmt}</span>
-          <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{billing?.cycle_end ? Math.floor((new Date(billing.cycle_end) - new Date()) / (1000 * 60 * 60 * 24)) : '—'} days left</span>
+          <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{daysLeft > 0 ? `${daysLeft} days left` : 'Cycle ended'}</span>
         </div>
 
         <div className="e-seg-track">

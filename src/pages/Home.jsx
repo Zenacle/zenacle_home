@@ -43,6 +43,8 @@ function Skeleton({ className = '' }) {
 
 // ── EnergyCard — now reads `today.devices` (clean array) ──────────────────────
 function EnergyCard({ today, viewMode, toggleViewMode }) {
+  const [isOpen, setIsOpen] = useState(false)
+  
   const devices = today?.devices || []
   const note = today?.device_breakdown_note ?? null
   const maxKwh = devices.length ? Math.max(...devices.map(d => d.kwh), 0.1) : 1
@@ -51,8 +53,10 @@ function EnergyCard({ today, viewMode, toggleViewMode }) {
   const actualToday = new Date().toISOString().split('T')[0]
   const isNotLive = today?.is_fallback || (today?.report_date && today.report_date !== actualToday)
 
+  const modes = ['Daily', 'Weekly', 'Billing Cycle']
+
   return (
-    <div className="card mb-3">
+    <div className="card mb-3 relative">
       <div className="flex items-start justify-between mb-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest text-tx-3 mb-1">
@@ -80,14 +84,41 @@ function EnergyCard({ today, viewMode, toggleViewMode }) {
             <p className="text-[10px] text-tx-3 mt-0.5">as of {today.as_of_ist} IST</p>
           )}
         </div>
-        <div
-          onClick={toggleViewMode}
-          className="flex items-center gap-1 bg-surface-2 rounded-full px-3 py-1.5 border border-black/10 cursor-pointer"
-        >
-          <span className="text-xs font-semibold text-tx">{viewMode}</span>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M3 4.5l3 3 3-3" stroke="#6B6860" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+
+        {/* Custom Dropdown */}
+        <div className="relative">
+          <div 
+            onClick={() => setIsOpen(!isOpen)}
+            className="flex items-center gap-1 bg-surface-2 rounded-full px-3 py-1.5 border border-black/10 cursor-pointer active:scale-95 transition-all"
+          >
+            <span className="text-xs font-semibold text-tx">{viewMode}</span>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+              <path d="M3 4.5l3 3 3-3" stroke="#6B6860" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+
+          {isOpen && (
+            <>
+              <div 
+                className="fixed inset-0 z-20" 
+                onClick={() => setIsOpen(false)}
+              />
+              <div className="absolute right-0 mt-2 w-32 bg-surface border border-black/8 rounded-2xl shadow-xl z-30 py-1 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                {modes.map(m => (
+                  <div
+                    key={m}
+                    onClick={() => {
+                      toggleViewMode(m)
+                      setIsOpen(false)
+                    }}
+                    className={`px-4 py-2 text-[13px] font-medium transition-colors cursor-pointer ${viewMode === m ? 'bg-green-bg text-green-mid' : 'text-tx-2 hover:bg-surface-2Active'}`}
+                  >
+                    {m}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -165,12 +196,16 @@ function BillingCard({ billing, report }) {
   const slab = currentSlab(unitsEstimated)
   const slabIdx = SLABS.indexOf(slab)
 
-  const cycleStart = billing?.cycle_start
-    ? new Date(billing.cycle_start).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
-    : '28 Mar'
-  const cycleEnd = billing?.cycle_end
-    ? new Date(billing.cycle_end).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
-    : '28 May'
+  const cycleStart = billing?.cycle_start ? new Date(billing.cycle_start) : null
+  const cycleEnd = billing?.cycle_end ? new Date(billing.cycle_end) : null
+  const isHistorical = cycleEnd && cycleEnd < new Date()
+  
+  const startFmt = cycleStart 
+    ? cycleStart.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: cycleStart.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined })
+    : '—'
+  const endFmt = cycleEnd 
+    ? cycleEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: cycleEnd.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined })
+    : '—'
 
   const forecast = billing?.kwh_estimated || 0
   const segWidths = [100, 100, 300, 500]
@@ -179,9 +214,9 @@ function BillingCard({ billing, report }) {
   return (
     <div className="card mb-3">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-tx-2">TNEB · {cycleStart} – {cycleEnd}</span>
+        <span className="text-xs text-tx-2">TNEB · {startFmt} – {endFmt}</span>
         <span className="badge text-[10px]" style={{ background: slab.bg, color: slab.text }}>
-          In Slab {slabIdx + 1}
+          {isHistorical ? 'Cycle Ended' : `In Slab ${slabIdx + 1}`}
         </span>
       </div>
 
@@ -387,8 +422,8 @@ export default function Home() {
   const [viewMode, setViewMode] = useState('Daily')
   const { data, loading } = useHomeData(household?.id, viewMode)
 
-  const toggleViewMode = () => {
-    setViewMode(v => v === 'Daily' ? 'Weekly' : v === 'Weekly' ? 'Billing Cycle' : 'Daily')
+  const handleViewModeChange = (newMode) => {
+    setViewMode(newMode)
   }
 
   const userName = session?.user?.user_metadata?.full_name?.split(' ')[0]
@@ -426,7 +461,7 @@ export default function Home() {
             <EnergyCard
               today={data?.today}
               viewMode={viewMode}
-              toggleViewMode={toggleViewMode}
+              toggleViewMode={handleViewModeChange}
             />
             {/* ✅ passing billing not cycle */}
             <BillingCard

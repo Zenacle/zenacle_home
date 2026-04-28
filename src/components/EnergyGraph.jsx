@@ -18,14 +18,16 @@ function CustomTooltip({ active, payload, label }) {
   )
 }
 
-export default function EnergyGraph({ viewMode, householdId, cycleStart, slabCrossingDate, selectedDate }) {
+export default function EnergyGraph({ viewMode, householdId, cycleStart, cycleEnd, slabCrossingDate, selectedDate }) {
   const [graphData, setGraphData] = useState([])
   const [billingSubMode, setBillingSubMode] = useState('day') // 'day' | 'week'
   const [loading, setLoading] = useState(true)
 
+  const todayStr = new Date().toISOString().split('T')[0]
+
   useEffect(() => {
     fetchGraphData()
-  }, [viewMode, householdId, selectedDate, billingSubMode])
+  }, [viewMode, householdId, selectedDate, cycleStart, cycleEnd, billingSubMode])
 
   async function fetchGraphData() {
     setLoading(true)
@@ -69,67 +71,112 @@ export default function EnergyGraph({ viewMode, householdId, cycleStart, slabCro
         setGraphData(hours)
 
       } else if (viewMode === 'Weekly') {
-        const sevenDaysAgo = new Date()
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-        const todayStr = new Date().toISOString().split('T')[0]
-        const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0]
+        const d = new Date(selectedDate + 'T00:00:00')
+        const day = d.getDay() // 0=Sun, 1=Mon, ..., 6=Sat
+        
+        // Find Monday of the week containing selectedDate
+        const diff = (day === 0 ? -6 : 1) - day
+        const monday = new Date(d)
+        monday.setDate(d.getDate() + diff)
+        
+        const dStartStr = monday.toISOString().split('T')[0]
+        const dEnd = new Date(monday)
+        dEnd.setDate(dEnd.getDate() + 6)
+        const dEndStr = dEnd.toISOString().split('T')[0]
 
         const { data, error } = await supabase
           .from('daily_reports')
           .select('report_date, total_kwh, total_sessions, estimated_cost_inr')
           .eq('household_id', householdId)
-          .gte('report_date', sevenDaysAgoStr)
-          .lte('report_date', todayStr)
+          .gte('report_date', dStartStr)
+          .lte('report_date', dEndStr)
           .order('report_date', { ascending: true })
 
         if (error) throw error
 
-        const mapped = data.map(d => ({
-          label: new Date(d.report_date).toLocaleDateString('en-IN', { day: 'numeric' }),
-          kwh: d.total_kwh,
-          sessions: d.total_sessions,
-          cost: d.estimated_cost_inr,
-          isToday: d.report_date === todayStr
-        }))
-        setGraphData(mapped)
+        const fullWeek = []
+        const curr = new Date(monday)
+        for (let i = 0; i < 7; i++) {
+          const dStr = curr.toISOString().split('T')[0]
+          const record = data.find(r => r.report_date === dStr)
+          fullWeek.push({
+            label: curr.toLocaleDateString('en-IN', { weekday: 'short' }),
+            kwh: record ? record.total_kwh : 0,
+            sessions: record ? record.total_sessions : 0,
+            cost: record ? record.estimated_cost_inr : 0,
+            isToday: dStr === todayStr,
+            report_date: dStr
+          })
+          curr.setDate(curr.getDate() + 1)
+        }
+        setGraphData(fullWeek)
 
       } else if (viewMode === 'Billing Cycle') {
-        const todayStr = new Date().toISOString().split('T')[0]
+        const endDay = new Date(selectedDate)
+        const endDayStr = endDay.toISOString().split('T')[0]
+        
+        // For Billing Cycle, we show the full window (typically 60 days) 
+        // to provide a perspective of the entire cycle.
+        const finalEndStr = cycleEnd || endDayStr
+
         const { data, error } = await supabase
           .from('daily_reports')
           .select('report_date, total_kwh, total_sessions, estimated_cost_inr')
           .eq('household_id', householdId)
           .gte('report_date', cycleStart)
-          .lte('report_date', todayStr)
+          .lte('report_date', finalEndStr)
           .order('report_date', { ascending: true })
 
         if (error) throw error
 
+        console.log('[EnergyGraph] Billing Cycle:', { cycleStart, finalEndStr, billingSubMode })
+
         if (billingSubMode === 'day') {
-          // Generate all days from cycleStart to today
           const allDays = []
-          const curr = new Date(cycleStart)
-          const end = new Date()
-          while (curr <= end) {
-            const dStr = curr.toISOString().split('T')[0]
+          
+          const curr = new Date(cycleStart + 'T00:00:00')
+          const limitStr = finalEndStr
+          
+          console.log('[EnergyGraph] Start loop:', { cycleStart, limitStr })
+
+          let lastMonth = -1
+          // Use string comparison safely
+          while (true) {
+            const y = curr.getFullYear()
+            const m = (curr.getMonth() + 1).toString().padStart(2, '0')
+            const d = curr.getDate().toString().padStart(2, '0')
+            const dStr = `${y}-${m}-${d}`
+            
+            if (dStr > limitStr) break
+
             const record = data.find(r => r.report_date === dStr)
+            
+            const currentMonth = curr.getMonth()
+            let label = curr.getDate().toString()
+            if (currentMonth !== lastMonth || allDays.length === 0) {
+              label = curr.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+              lastMonth = currentMonth
+            }
+
             allDays.push({
-              label: curr.toLocaleDateString('en-IN', { day: 'numeric' }),
+              label,
               kwh: record ? record.total_kwh : 0,
               sessions: record ? record.total_sessions : 0,
               cost: record ? record.estimated_cost_inr : 0,
               isToday: dStr === todayStr,
               report_date: dStr
             })
+            
             curr.setDate(curr.getDate() + 1)
+            if (allDays.length > 120) break 
           }
+          console.log('[EnergyGraph] Loop finished. Total days:', allDays.length)
           setGraphData(allDays)
         } else {
           // Week-wise: 60 days cycle = ~8.5 weeks. Show at least 8.
-          const weekBuckets = []
-          for (let w = 1; w <= 9; w++) {
-            weekBuckets.push({ label: `Week ${w}`, kwh: 0, sessions: 0, cost: 0 })
-          }
+          const weekBuckets = Array.from({ length: 9 }, (_, i) => ({
+            label: `Week ${i + 1}`, kwh: 0, sessions: 0, cost: 0
+          }))
 
           data.forEach(d => {
             const daysDiff = Math.floor((new Date(d.report_date) - new Date(cycleStart)) / (1000 * 60 * 60 * 24))
