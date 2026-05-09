@@ -96,11 +96,24 @@ function fmt(mins) {
 
 function calcTNEBCost(units) {
   if (units <= 0) return 0
-  let cost = 0
-  if (units > 100) cost += Math.min(units - 100, 100) * 2.35
-  if (units > 200) cost += Math.min(units - 200, 300) * 4.70
-  if (units > 500) cost += Math.min(units - 500, 500) * 6.30
-  return Math.round(cost)
+  if (units <= 500) {
+    // Part 1: ≤500 units
+    let cost = 0
+    if (units > 100) cost += Math.min(units - 100, 100) * 2.35  // 101–200
+    if (units > 200) cost += Math.min(units - 200, 200) * 4.70  // 201–400
+    if (units > 400) cost += Math.min(units - 400, 100) * 6.30  // 401–500
+    return Math.round(cost)
+  } else {
+    // Part 2: >500 units — entire consumption recalculated at new rates
+    let cost = 0
+    // 1–100: Free
+    if (units > 100) cost += Math.min(units - 100, 300) * 4.70  // 101–400
+    if (units > 400) cost += Math.min(units - 400, 100) * 6.30  // 401–500
+    if (units > 500) cost += Math.min(units - 500, 100) * 8.40  // 501–600
+    if (units > 600) cost += Math.min(units - 600, 200) * 9.45  // 601–800
+    if (units > 800) cost += Math.min(units - 800, 200) * 10.50 // 801–1000
+    return Math.round(cost)
+  }
 }
 
 function EnergyHeader({ cycleDay, startDate, endDate, slabRate, slabName }) {
@@ -304,6 +317,8 @@ export default function Energy() {
         .e-sp .sr { font-size:12px; font-weight:500; margin-top:1px; }
         .e-sp .ss { font-size:9px; margin-top:2px; }
         .e-sp-ring { border:1.5px solid currentColor; }
+        .e-sp-bar-bg { height:3px; background:rgba(0,0,0,0.06); border-radius:2px; margin:5px auto 0; width:80%; overflow:hidden; }
+        .e-sp-bar { height:100%; border-radius:2px; transition:width .5s ease; }
         .e-proj-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; text-align:center; margin-top:2px; }
         .e-prc { border-radius:9px; padding:8px 5px; }
         .e-prc-lbl { font-size:10px; color:var(--tx3); }
@@ -546,19 +561,56 @@ export default function Energy() {
         </div>
 
         <div className="e-seg-track">
-          <div className="e-seg" style={{ flex: Math.min(billing?.kwh_estimated || 0, 100), background: 'var(--Gm)' }}></div>
-          <div className="e-seg" style={{ flex: Math.max(0, Math.min((billing?.kwh_estimated || 0) - 100, 100)), background: 'var(--Am)' }}></div>
-          <div className="e-seg" style={{ flex: Math.max(0, Math.min((billing?.kwh_estimated || 0) - 200, 300)), background: 'var(--Rm)' }}></div>
-          <div className="e-seg" style={{ flex: Math.max(0, (billing?.kwh_estimated || 0) - 500), background: 'var(--Pm)' }}></div>
-          <div className="e-seg" style={{ flex: Math.max(1, 1000 - (billing?.kwh_estimated || 0)), background: '#888', opacity: .05 }}></div>
+          {(billing?.kwh_estimated || 0) <= 500 ? (() => {
+            const est = billing?.kwh_estimated || 0;
+            const w1 = Math.min(est, 100) / 5;
+            const w2 = Math.max(0, Math.min(est - 100, 100)) / 5;
+            const w3 = Math.max(0, Math.min(est - 200, 200)) / 5;
+            const w4 = Math.max(0, Math.min(est - 400, 100)) / 5;
+            const rem = Math.max(0, 500 - est) / 5;
+            return (
+              <>
+                {w1 > 0 && <div className="e-seg" style={{ width: `${w1}%`, background: 'var(--Gm)' }}></div>}
+                {w2 > 0 && <div className="e-seg" style={{ width: `${w2}%`, background: 'var(--Am)' }}></div>}
+                {w3 > 0 && <div className="e-seg" style={{ width: `${w3}%`, background: 'var(--Rm)' }}></div>}
+                {w4 > 0 && <div className="e-seg" style={{ width: `${w4}%`, background: 'var(--Pm)' }}></div>}
+                {rem > 0 && <div className="e-seg" style={{ width: `${rem}%`, background: '#888', opacity: .1 }}></div>}
+              </>
+            );
+          })() : (() => {
+            const est = billing?.kwh_estimated || 0;
+            const w1 = 100 / 10;
+            const w2 = Math.min(est - 100, 300) / 10;
+            const w3 = Math.max(0, Math.min(est - 400, 100)) / 10;
+            const w4 = Math.max(0, Math.min(est - 500, 100)) / 10;
+            const w5 = Math.max(0, Math.min(est - 600, 200)) / 10;
+            const w6 = Math.max(0, Math.min(est - 800, 200)) / 10;
+            const rem = Math.max(0, 1000 - est) / 10;
+            return (
+              <>
+                {w1 > 0 && <div className="e-seg" style={{ width: `${w1}%`, background: 'var(--Gm)' }}></div>}
+                {w2 > 0 && <div className="e-seg" style={{ width: `${w2}%`, background: '#1A5FB4' }}></div>}
+                {w3 > 0 && <div className="e-seg" style={{ width: `${w3}%`, background: 'var(--Am)' }}></div>}
+                {w4 > 0 && <div className="e-seg" style={{ width: `${w4}%`, background: 'var(--Rm)' }}></div>}
+                {w5 > 0 && <div className="e-seg" style={{ width: `${w5}%`, background: '#9B2C2C' }}></div>}
+                {w6 > 0 && <div className="e-seg" style={{ width: `${w6}%`, background: 'var(--Pm)' }}></div>}
+                {rem > 0 && <div className="e-seg" style={{ width: `${rem}%`, background: '#888', opacity: .1 }}></div>}
+              </>
+            );
+          })()}
         </div>
 
-        <div className="e-slab-row">
+        <div className="e-slab-row" style={(billing?.kwh_estimated || 0) > 500 ? { gridTemplateColumns: 'repeat(3, minmax(0,1fr))' } : {}}>
           {(billing?.slab_status || []).map((s, idx) => (
             <div key={idx} className={`e-sp ${s.active ? 'e-sp-ring' : ''}`} style={{ background: s.active ? 'var(--Abg)' : s.status === 'Done ✓' ? 'var(--Gbg)' : 'var(--s2)', opacity: s.status.includes('–') ? 0.5 : 1 }}>
               <div className="sn" style={{ color: s.active ? 'var(--Am)' : s.status === 'Done ✓' ? 'var(--Gm)' : 'var(--tx3)' }}>{s.name}</div>
               <div className="sr" style={{ color: s.active ? 'var(--A)' : s.status === 'Done ✓' ? 'var(--G)' : 'var(--tx)' }}>{s.rate}</div>
               <div className="ss" style={{ color: s.active ? 'var(--Am)' : s.status === 'Done ✓' ? 'var(--Gm)' : 'var(--tx3)' }}>{s.status}</div>
+              {s.fillPct !== undefined && (
+                <div className="e-sp-bar-bg">
+                  <div className="e-sp-bar" style={{ width: `${s.fillPct}%`, background: s.status === 'Done ✓' ? 'var(--Gm)' : s.active ? 'var(--Am)' : 'var(--tx3)' }}></div>
+                </div>
+              )}
             </div>
           ))}
         </div>

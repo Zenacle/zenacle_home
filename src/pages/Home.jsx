@@ -23,19 +23,7 @@ function initials(name) {
   return name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'ZH'
 }
 
-const SLABS = [
-  { slab: 1, min: 0,   max: 100,  rate: 0,    label: 'Free',   color: '#2D7D46', bg: '#E3F5E9', text: '#1F6E3F' },
-  { slab: 2, min: 101, max: 200,  rate: 2.35, label: '₹2.35',  color: '#D4880A', bg: '#FEF3DC', text: '#B87200' },
-  { slab: 3, min: 201, max: 400,  rate: 4.70, label: '₹4.70',  color: '#C0392B', bg: '#FDECEA', text: '#A8261E' },
-  { slab: 4, min: 401, max: 500,  rate: 6.30, label: '₹6.30',  color: '#7B1FA2', bg: '#F3E8FF', text: '#6A1290' },
-]
-
-function currentSlab(units) {
-  if (units <= 100) return SLABS[0]
-  if (units <= 200) return SLABS[1]
-  if (units <= 400) return SLABS[2]
-  return SLABS[3]
-}
+// Slabs now driven by useHomeData (two-part TNEB logic)
 
 function Skeleton({ className = '' }) {
   return <div className={`bg-surface-2 rounded-lg animate-pulse ${className}`} />
@@ -190,11 +178,8 @@ function EnergyCard({ today, viewMode, toggleViewMode }) {
 
 // ── BillingCard — now reads `billing.kwh_accumulated` ─────────────────────────
 function BillingCard({ billing, report }) {
-  // ✅ billing.kwh_accumulated is the correct key
   const unitsMeasured = billing?.kwh_accumulated || 0
   const unitsEstimated = billing?.kwh_estimated || 0
-  const slab = currentSlab(unitsEstimated)
-  const slabIdx = SLABS.indexOf(slab)
 
   const cycleStart = billing?.cycle_start ? new Date(billing.cycle_start) : null
   const cycleEnd = billing?.cycle_end ? new Date(billing.cycle_end) : null
@@ -207,60 +192,94 @@ function BillingCard({ billing, report }) {
     ? cycleEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: cycleEnd.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined })
     : '—'
 
-  const forecast = billing?.kwh_estimated || 0
-  const segWidths = [100, 100, 300, 500]
-  const total = segWidths.reduce((a, b) => a + b, 0)
-
   return (
     <div className="card mb-3">
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs text-tx-2">TNEB · {startFmt} – {endFmt}</span>
-        <span className="badge text-[10px]" style={{ background: slab.bg, color: slab.text }}>
-          {isHistorical ? 'Cycle Ended' : `In Slab ${slabIdx + 1}`}
+        <span className="badge text-[10px]" style={{ background: '#FEF3DC', color: '#B87200' }}>
+          {isHistorical ? 'Cycle Ended' : billing?.current_slab_name || '...'}
         </span>
       </div>
 
       <div className="flex h-2 rounded-full overflow-hidden mb-3">
-        {SLABS.map((s, i) => {
-          const filled = i < slabIdx
-          const current = i === slabIdx
-          const pct = (segWidths[i] / total * 100).toFixed(1)
+        {unitsEstimated <= 500 ? (() => {
+          const est = unitsEstimated;
+          const w1 = Math.min(est, 100) / 5;
+          const w2 = Math.max(0, Math.min(est - 100, 100)) / 5;
+          const w3 = Math.max(0, Math.min(est - 200, 200)) / 5;
+          const w4 = Math.max(0, Math.min(est - 400, 100)) / 5;
+          const rem = Math.max(0, 500 - est) / 5;
           return (
-            <div
-              key={i}
-              style={{
-                width: `${pct}%`,
-                backgroundColor: filled || current ? s.color : '#E8E4DE',
-                opacity: current ? 1 : filled ? 0.7 : 0.3,
-              }}
-            />
-          )
-        })}
+            <>
+              {w1 > 0 && <div style={{ width: `${w1}%`, background: '#2D7D46' }}></div>}
+              {w2 > 0 && <div style={{ width: `${w2}%`, background: '#D4880A' }}></div>}
+              {w3 > 0 && <div style={{ width: `${w3}%`, background: '#C0392B' }}></div>}
+              {w4 > 0 && <div style={{ width: `${w4}%`, background: '#5B3FA6' }}></div>}
+              {rem > 0 && <div style={{ width: `${rem}%`, background: '#888', opacity: 0.15 }}></div>}
+            </>
+          );
+        })() : (() => {
+          const est = unitsEstimated;
+          const w1 = 100 / 10;
+          const w2 = Math.min(est - 100, 300) / 10;
+          const w3 = Math.max(0, Math.min(est - 400, 100)) / 10;
+          const w4 = Math.max(0, Math.min(est - 500, 100)) / 10;
+          const w5 = Math.max(0, Math.min(est - 600, 200)) / 10;
+          const w6 = Math.max(0, Math.min(est - 800, 200)) / 10;
+          const rem = Math.max(0, 1000 - est) / 10;
+          return (
+            <>
+              {w1 > 0 && <div style={{ width: `${w1}%`, background: '#2D7D46' }}></div>}
+              {w2 > 0 && <div style={{ width: `${w2}%`, background: '#1A5FB4' }}></div>}
+              {w3 > 0 && <div style={{ width: `${w3}%`, background: '#D4880A' }}></div>}
+              {w4 > 0 && <div style={{ width: `${w4}%`, background: '#C0392B' }}></div>}
+              {w5 > 0 && <div style={{ width: `${w5}%`, background: '#9B2C2C' }}></div>}
+              {w6 > 0 && <div style={{ width: `${w6}%`, background: '#5B3FA6' }}></div>}
+              {rem > 0 && <div style={{ width: `${rem}%`, background: '#888', opacity: 0.15 }}></div>}
+            </>
+          );
+        })()}
       </div>
 
-      <div className="grid grid-cols-4 gap-1 mb-3">
-        {SLABS.map((s, i) => {
-          const isCurrent = i === slabIdx
-          const isPast = i < slabIdx
+      <div className={`grid gap-1 mb-3 ${unitsEstimated > 500 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+        {(billing?.slab_status || []).map((s, idx) => {
+          const colorMap = {
+            'Slab 1': '#2D7D46',
+            'Slab 2': unitsEstimated <= 500 ? '#D4880A' : '#1A5FB4',
+            'Slab 3': unitsEstimated <= 500 ? '#C0392B' : '#D4880A',
+            'Slab 4': unitsEstimated <= 500 ? '#5B3FA6' : '#C0392B',
+            'Slab 5': '#9B2C2C',
+            'Slab 6': '#5B3FA6',
+          };
+          const color = colorMap[s.name] || '#888';
+          
           return (
             <div
-              key={i}
-              className="rounded-lg py-1.5 px-1 text-center"
+              key={idx}
+              className="rounded-lg py-1.5 px-1 text-center relative"
               style={{
-                background: isCurrent ? s.bg : isPast ? s.bg : '#F0EDE7',
-                border: isCurrent ? `1.5px solid ${s.color}` : '1px solid transparent',
-                opacity: i > slabIdx ? 0.5 : 1,
+                background: s.active ? `${color}20` : s.status === 'Done ✓' ? '#F0EDE7' : '#F0EDE7',
+                border: s.active ? `1.5px solid ${color}` : '1px solid transparent',
+                opacity: s.status.includes('–') ? 0.5 : 1,
               }}
             >
-              <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: s.color }}>
-                Slab {i + 1}
+              <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: s.active ? color : s.status === 'Done ✓' ? '#2D7D46' : '#A8A59E' }}>
+                {s.name}
               </div>
-              <div className="text-xs font-medium mt-0.5" style={{ color: isPast || isCurrent ? s.text : '#A8A59E' }}>
-                {s.label}
+              <div className="text-xs font-medium mt-0.5" style={{ color: s.active ? color : s.status === 'Done ✓' ? '#1F6E3F' : '#1A1916' }}>
+                {s.rate}
               </div>
-              <div className="text-[9px] mt-0.5" style={{ color: s.color }}>
-                {isPast ? 'Done ✓' : isCurrent ? 'Now' : `${SLABS[i - 1]?.max ?? 0 + 1}–${s.max}`}
+              <div className="text-[9px] mt-0.5" style={{ color: s.active ? color : s.status === 'Done ✓' ? '#2D7D46' : '#A8A59E' }}>
+                {s.status}
               </div>
+              {s.fillPct !== undefined && (
+                <div className="mx-auto mt-1 w-4/5 h-[3px] bg-black/5 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full rounded-full transition-all duration-500" 
+                    style={{ width: `${s.fillPct}%`, background: s.status === 'Done ✓' ? '#2D7D46' : s.active ? color : '#A8A59E' }} 
+                  />
+                </div>
+              )}
             </div>
           )
         })}
@@ -271,14 +290,6 @@ function BillingCard({ billing, report }) {
           <strong className="text-tx">{Math.round(unitsMeasured)}</strong> measured · 
           <strong className="text-tx ml-1">{Math.round(unitsEstimated)}</strong> est. total
         </span>
-        {unitsEstimated > 0 && (
-          <span className="flex items-center gap-1">
-            Slab {slabIdx + 1} limit: {slab.max}
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2 10L10 2M10 2H5M10 2v5" stroke="#6B6860" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-        )}
       </div>
 
       <div className="mt-3 bg-amber-bg rounded-xl p-3 flex gap-2.5 items-start border border-amber-mid/30">
@@ -289,7 +300,13 @@ function BillingCard({ billing, report }) {
         </svg>
         <div>
           <p className="text-xs font-medium text-amber-mid">
-            {unitsEstimated > slab.max ? 'Projected to cross current slab' : `${Math.round(slab.max - unitsEstimated)} units buffer on estimated total`}
+            {(() => {
+              const activeSlab = (billing?.slab_status || []).find(s => s.active);
+              const maxUnits = activeSlab && activeSlab.range ? parseInt(activeSlab.range.split('–')[1], 10) : 500;
+              return unitsEstimated > maxUnits 
+                ? 'Projected to cross current slab' 
+                : `${Math.round(maxUnits - unitsEstimated)} units buffer on estimated total`
+            })()}
           </p>
           <p className="text-[11px] text-amber-mid/80 mt-0.5">
             {report?.slab_crossing_date
@@ -332,30 +349,64 @@ function WaterWasteTiles({ waterConnected }) {
 }
 
 function OpenSessionCard({ devicesStillOn }) {
-  // Use real data if available, otherwise display the exact mockup design as a fallback
-  const dev = devicesStillOn?.length ? devicesStillOn[0] : { 
-    name: "AC — 1st floor", 
-    mockText: "Running for 4h 20m. Adding ~0.8 units per hour to your current bill." 
+  if (!devicesStillOn || devicesStillOn.length === 0) {
+    return (
+      <div className="bg-[#F0FDF4] rounded-[24px] p-5 mb-4 flex gap-4 items-center border border-[#DCFCE7]">
+        <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 21a9 9 0 1 1 9-9c-1.3-.2-3-.2-4.5.5-2 1-3.5 3-4 5.5-.2 1.5.2 3 .5 4v0c-1 .3-2 .5-3 .5z" fill="#22C55E" stroke="#22C55E" strokeWidth="1.5" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div>
+          <h3 className="text-[15px] font-bold text-[#14532D] mb-1">No devices running</h3>
+          <p className="text-[13px] text-[#166534] leading-snug">Your home is in an optimal, low-power state.</p>
+        </div>
+      </div>
+    )
   }
 
+  const now = new Date()
+
   return (
-    <div className="bg-[#FFF9EE] rounded-[24px] p-5 mb-4 flex gap-4 items-start border border-[#F2E5D0]">
-      <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M12 4L4 18H20L12 4Z" fill="#E89F2A" stroke="#E89F2A" strokeWidth="2" strokeLinejoin="round" />
-          <path d="M12 10V14" stroke="white" strokeWidth="2" strokeLinecap="round" />
-          <circle cx="12" cy="16.5" r="1.5" fill="white" />
-        </svg>
+    <div className="bg-[#FFF9EE] rounded-[24px] p-5 mb-4 border border-[#F2E5D0]">
+      <div className="mb-3">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-[#D4880A]">Currently Running ({devicesStillOn.length})</span>
       </div>
-      <div className="pt-0.5">
-        <h3 className="text-[15px] font-bold text-[#2A2A2A] mb-1.5">{dev.name} {dev.name.includes("is still on") ? "" : "is still on"}</h3>
-        <p className="text-[13px] text-[#6B6860] leading-snug">
-          {dev.started_ist ? `Running since ${dev.started_ist}.` : dev.mockText}
-        </p>
+      <div className="space-y-4">
+        {devicesStillOn.map((dev, i) => {
+          let durationStr = "Just started"
+          if (dev.started_raw) {
+            const start = new Date(dev.started_raw)
+            const diffMs = now - start
+            const hrs = Math.floor(diffMs / 3600000)
+            const mins = Math.floor((diffMs % 3600000) / 60000)
+            if (hrs > 0) durationStr = `${hrs}h ${mins}m`
+            else if (mins > 0) durationStr = `${mins}m`
+          }
+
+          return (
+            <div key={dev.device_id || i} className={`flex gap-4 items-start ${i > 0 ? 'pt-4 border-t border-[#F2E5D0]' : ''}`}>
+              <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center flex-shrink-0 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 4L4 18H20L12 4Z" fill="#E89F2A" stroke="#E89F2A" strokeWidth="2" strokeLinejoin="round" />
+                  <path d="M12 10V14" stroke="white" strokeWidth="2" strokeLinecap="round" />
+                  <circle cx="12" cy="16.5" r="1.5" fill="white" />
+                </svg>
+              </div>
+              <div className="pt-0.5">
+                <h3 className="text-[15px] font-bold text-[#2A2A2A] mb-1.5">{dev.name}</h3>
+                <p className="text-[13px] text-[#6B6860] leading-snug">
+                  {dev.started_ist ? `Started at ${dev.started_ist} · Running for ${durationStr}` : dev.mockText || 'Currently active'}
+                </p>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
+
 
 function InsightCard({ tip }) {
   // Always display the UI perfectly matching the mockup, using fallback text if backend is empty
