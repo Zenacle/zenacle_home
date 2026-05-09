@@ -5,7 +5,8 @@ import Login from './pages/Login'
 import Home from './pages/Home'
 import Energy from './pages/Energy'
 import Appliances from './pages/Appliances'
-import { Usage, Reports, Settings } from './pages/Placeholder'
+import { Usage, Settings } from './pages/Placeholder'
+import Reports from './pages/Reports'
 
 function AuthGuard({ children }) {
   const { isLoggedIn, isLoading } = useAuth()

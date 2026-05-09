@@ -120,7 +120,7 @@ function EnergyHeader({ cycleDay, startDate, endDate, slabRate, slabName }) {
   return (
     <div className="energy-header">
       <div className="left">
-        <h1>Energy</h1>
+        <h1 className="font-serif">Energy</h1>
         <p>
           Cycle day {cycleDay} · {startDate} – {endDate}
         </p>
@@ -272,7 +272,7 @@ export default function Energy() {
   const cmpStatus = isTodayStr ? 'highest' : d.kwh < 13 ? 'below' : 'average'
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] pb-24 font-['DM_Sans',sans-serif]">
+    <div className="min-h-screen bg-[var(--bg)] pb-24">
       <style>{`
         .e-hdr { background:var(--surface); padding:14px 16px 14px; border-bottom:1px solid var(--b); position:sticky; top:0; z-index:20; }
         .e-hdr-row { display:flex; justify-content:space-between; align-items:flex-start; }

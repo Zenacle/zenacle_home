@@ -358,7 +358,7 @@ function OpenSessionCard({ devicesStillOn }) {
           </svg>
         </div>
         <div>
-          <h3 className="text-[15px] font-bold text-[#14532D] mb-1">No devices running</h3>
+          <h3 className="text-[17px] font-serif text-[#14532D] mb-1">No devices running</h3>
           <p className="text-[13px] text-[#166534] leading-snug">Your home is in an optimal, low-power state.</p>
         </div>
       </div>
@@ -394,7 +394,7 @@ function OpenSessionCard({ devicesStillOn }) {
                 </svg>
               </div>
               <div className="pt-0.5">
-                <h3 className="text-[15px] font-bold text-[#2A2A2A] mb-1.5">{dev.name}</h3>
+                <h3 className="text-[17px] font-serif text-[#2A2A2A] mb-1.5">{dev.name}</h3>
                 <p className="text-[13px] text-[#6B6860] leading-snug">
                   {dev.started_ist ? `Started at ${dev.started_ist} · Running for ${durationStr}` : dev.mockText || 'Currently active'}
                 </p>
@@ -446,7 +446,7 @@ function InsightCard({ tip }) {
           </svg>
         </div>
         <div className="pt-0.5 pr-2">
-          <h3 className="text-[15px] font-bold text-[#1A1A1A] mb-1.5">AI Performance Insight</h3>
+          <h3 className="text-[17px] font-serif text-[#1A1A1A] mb-1.5">AI Performance Insight</h3>
           <p className="text-[14px] text-[#6B6860] leading-[1.4] max-w-[95%]">{mainTip}</p>
         </div>
       </div>
@@ -490,7 +490,7 @@ export default function Home() {
       <div className="bg-surface border-b border-black/8 px-4 pt-3 pb-4 sticky top-0 z-10">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-lg font-medium text-tx">{greet()}, {userName}</h1>
+            <h1 className="text-2xl font-serif text-tx">{greet()}, {userName}!</h1>
             <p className="text-xs text-tx-2 mt-0.5">{today} · {household?.city || 'Nagercoil'}</p>
           </div>
           <div className="w-9 h-9 rounded-full bg-green-bg flex items-center justify-center">

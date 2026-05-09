@@ -33,6 +33,7 @@ export default {
       },
       fontFamily: {
         sans: ['DM Sans', 'system-ui', 'sans-serif'],
+        serif: ['DM Serif Display', 'serif'],
         mono: ['DM Mono', 'monospace'],
       },
       borderRadius: {

@@ -333,7 +333,7 @@ export default function Appliances() {
   const totalCount = DEVICES.length
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] pb-24 font-['DM_Sans',sans-serif]">
+    <div className="min-h-screen bg-[var(--bg)] pb-24">
       <style>{`
         :root {
           --Gm:#2D7D46; --Gbg:#E3F5E9; --G:#1F6E3F;
@@ -477,7 +477,7 @@ export default function Appliances() {
             <div className="hdr">
               <div className="hdr-top">
                 <div>
-                  <div className="hdr-title">Appliances</div>
+                  <div className="hdr-title font-serif">Appliances</div>
                   <div className="hdr-sub">{totalCount} devices total · {DEVICES.filter(d => d.status === 'connected').length} connected</div>
                 </div>
                 <button style={{background:'var(--Gm)',color:'white',border:'none',borderRadius:'10px',padding:'7px 14px',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit',marginTop:'4px'}}>+ Add</button>
