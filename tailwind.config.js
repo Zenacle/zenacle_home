@@ -5,7 +5,7 @@ export default {
     extend: {
       colors: {
         // App backgrounds
-        'app-bg':       '#F2EFE9',
+        'app-bg':       '#FDFCF0',
         'surface':      '#FFFFFF',
         'surface-2':    '#F0EDE7',
         'surface-3':    '#E8E4DE',

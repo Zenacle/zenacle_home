@@ -51,7 +51,7 @@ export default function Login() {
         <svg width="22" height="22" viewBox="0 0 28 28" fill="none">
           <path d="M14 3L3 10v15h8v-8h6v8h8V10L14 3Z" fill="#F5C518"/>
         </svg>
-        <span className="text-white text-base font-medium">Zenacle Home</span>
+        <span className="text-white text-base font-medium">Habtekt</span>
       </div>
 
       <div className="flex-1">
@@ -122,7 +122,7 @@ export default function Login() {
       </div>
 
       <p className="text-white/30 text-xs text-center mt-8">
-        By continuing you agree to Zenacle's Terms &amp; Privacy Policy
+        By continuing you agree to Habtekt's Terms &amp; Privacy Policy
       </p>
     </div>
   )

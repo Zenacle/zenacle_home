@@ -55,7 +55,7 @@ const DAYS = [
       {name:'Water Pump',loc:'Utility',mins:35,kwh:0.29,pct:1.7,color:'var(--Gm)',ico:'pump'}
     ],
     openSession:null,
-    tip:{head:'AC 1st Floor ran nearly 16 hours last night',body:'Cycling it off for 30 minutes every 2 hours can reduce consumption by 15–20% (BEE). You can set this schedule in the Zenacle app once scheduling is live.',kwh:'11.31',time:'15h 58m'}
+    tip:{head:'AC 1st Floor ran nearly 16 hours last night',body:'Cycling it off for 30 minutes every 2 hours can reduce consumption by 15–20% (BEE). You can set this schedule in the Habtekt app once scheduling is live.',kwh:'11.31',time:'15h 58m'}
   },
   {
     label:'Apr 25', kwh:18.22, est:30.37, cost:'₹45', runtime:'14h 10m', costSub:'Slab 2 · ₹2.35/unit',
@@ -354,8 +354,9 @@ export default function Energy() {
           border-bottom: 1px solid var(--b);
         }
         .energy-header h1 {
+          font-family: 'DM Serif Display', serif;
           font-size: 22px;
-          font-weight: 600;
+          font-weight: 500;
           color: #1A1916;
           letter-spacing: -0.4px;
         }
@@ -409,7 +410,7 @@ export default function Energy() {
             ‹
           </button>
           <label className="relative cursor-pointer flex items-center gap-2 px-1 py-1 rounded-lg hover:bg-black/5 transition-colors group">
-            <div className="text-[15px] font-medium tracking-tight whitespace-nowrap">
+            <div className="text-[15px] font-serif font-medium tracking-tight whitespace-nowrap">
               {navLabel}
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="opacity-40 group-hover:opacity-100 transition-opacity">
@@ -560,70 +561,144 @@ export default function Energy() {
           <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{daysLeft > 0 ? `${daysLeft} days left` : 'Cycle ended'}</span>
         </div>
 
-        <div className="e-seg-track">
-          {(billing?.kwh_estimated || 0) <= 500 ? (() => {
-            const est = billing?.kwh_estimated || 0;
-            const w1 = Math.min(est, 100) / 5;
-            const w2 = Math.max(0, Math.min(est - 100, 100)) / 5;
-            const w3 = Math.max(0, Math.min(est - 200, 200)) / 5;
-            const w4 = Math.max(0, Math.min(est - 400, 100)) / 5;
-            const rem = Math.max(0, 500 - est) / 5;
-            return (
-              <>
-                {w1 > 0 && <div className="e-seg" style={{ width: `${w1}%`, background: 'var(--Gm)' }}></div>}
-                {w2 > 0 && <div className="e-seg" style={{ width: `${w2}%`, background: 'var(--Am)' }}></div>}
-                {w3 > 0 && <div className="e-seg" style={{ width: `${w3}%`, background: 'var(--Rm)' }}></div>}
-                {w4 > 0 && <div className="e-seg" style={{ width: `${w4}%`, background: 'var(--Pm)' }}></div>}
-                {rem > 0 && <div className="e-seg" style={{ width: `${rem}%`, background: '#888', opacity: .1 }}></div>}
-              </>
-            );
-          })() : (() => {
-            const est = billing?.kwh_estimated || 0;
-            const w1 = 100 / 10;
-            const w2 = Math.min(est - 100, 300) / 10;
-            const w3 = Math.max(0, Math.min(est - 400, 100)) / 10;
-            const w4 = Math.max(0, Math.min(est - 500, 100)) / 10;
-            const w5 = Math.max(0, Math.min(est - 600, 200)) / 10;
-            const w6 = Math.max(0, Math.min(est - 800, 200)) / 10;
-            const rem = Math.max(0, 1000 - est) / 10;
-            return (
-              <>
-                {w1 > 0 && <div className="e-seg" style={{ width: `${w1}%`, background: 'var(--Gm)' }}></div>}
-                {w2 > 0 && <div className="e-seg" style={{ width: `${w2}%`, background: '#1A5FB4' }}></div>}
-                {w3 > 0 && <div className="e-seg" style={{ width: `${w3}%`, background: 'var(--Am)' }}></div>}
-                {w4 > 0 && <div className="e-seg" style={{ width: `${w4}%`, background: 'var(--Rm)' }}></div>}
-                {w5 > 0 && <div className="e-seg" style={{ width: `${w5}%`, background: '#9B2C2C' }}></div>}
-                {w6 > 0 && <div className="e-seg" style={{ width: `${w6}%`, background: 'var(--Pm)' }}></div>}
-                {rem > 0 && <div className="e-seg" style={{ width: `${rem}%`, background: '#888', opacity: .1 }}></div>}
-              </>
-            );
-          })()}
-        </div>
-
-        <div className="e-slab-row" style={(billing?.kwh_estimated || 0) > 500 ? { gridTemplateColumns: 'repeat(3, minmax(0,1fr))' } : {}}>
-          {(billing?.slab_status || []).map((s, idx) => (
-            <div key={idx} className={`e-sp ${s.active ? 'e-sp-ring' : ''}`} style={{ background: s.active ? 'var(--Abg)' : s.status === 'Done ✓' ? 'var(--Gbg)' : 'var(--s2)', opacity: s.status.includes('–') ? 0.5 : 1 }}>
-              <div className="sn" style={{ color: s.active ? 'var(--Am)' : s.status === 'Done ✓' ? 'var(--Gm)' : 'var(--tx3)' }}>{s.name}</div>
-              <div className="sr" style={{ color: s.active ? 'var(--A)' : s.status === 'Done ✓' ? 'var(--G)' : 'var(--tx)' }}>{s.rate}</div>
-              <div className="ss" style={{ color: s.active ? 'var(--Am)' : s.status === 'Done ✓' ? 'var(--Gm)' : 'var(--tx3)' }}>{s.status}</div>
-              {s.fillPct !== undefined && (
-                <div className="e-sp-bar-bg">
-                  <div className="e-sp-bar" style={{ width: `${s.fillPct}%`, background: s.status === 'Done ✓' ? 'var(--Gm)' : s.active ? 'var(--Am)' : 'var(--tx3)' }}></div>
-                </div>
-              )}
+        {/* Progress Bar */}
+        <div className="mb-9 mt-4 px-1">
+          <div style={{ position: 'relative', height: 10, borderRadius: 5, background: 'rgba(0,0,0,0.05)', overflow: 'visible' }}>
+            <div style={{ display: 'flex', height: '100%', borderRadius: 5, overflow: 'hidden' }}>
+              {[
+                { num: 1, units: 100, min: 1, max: 100, color: '#1D9E75' },
+                { num: 2, units: 100, min: 101, max: 200, color: '#EF9F27' },
+                { num: 3, units: 200, min: 201, max: 400, color: '#E24B4A' },
+                { num: 4, units: 100, min: 401, max: 500, color: '#534AB7' },
+              ].map(s => {
+                const est = billing?.kwh_estimated || 0;
+                return (
+                  <div key={s.num} style={{
+                    width: `${(s.units / 500) * 100}%`,
+                    background: est >= s.min ? s.color : 'rgba(0,0,0,0.1)',
+                    opacity: est >= s.min ? 1 : 0.2
+                  }} />
+                )
+              })}
             </div>
-          ))}
+            <div style={{ position: 'absolute', top: -3, left: `${Math.min(((billing?.kwh_accumulated || 0) / 500) * 100, 100)}%`, width: 2, height: 16, background: '#333', borderRadius: 1, transform: 'translateX(-50%)', zIndex: 10 }} />
+            <div style={{ position: 'absolute', top: 14, left: `${Math.min(((billing?.kwh_accumulated || 0) / 500) * 100, 100)}%`, transform: 'translateX(-50%)', fontSize: 9, fontWeight: 'bold', color: '#666', whiteSpace: 'nowrap' }}>
+              {(billing?.kwh_accumulated || 0).toFixed(0)} measured
+            </div>
+            <div style={{ position: 'absolute', top: -8, left: `${Math.min(((billing?.kwh_estimated || 0) / 500) * 100, 100)}%`, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '8px solid #333', transform: 'translateX(-50%)' }} />
+          </div>
         </div>
 
-        <div className="e-row" style={{ fontSize: 12, color: 'var(--tx2)', marginBottom: 10 }}>
-          <span>
-            <strong style={{ color: 'var(--tx)' }}>{(billing?.kwh_accumulated || 0).toFixed(1)}</strong> measured · 
-            <strong style={{ color: 'var(--tx)', marginLeft: 6 }}>{(billing?.kwh_estimated || 0).toFixed(1)}</strong> est. full home
-          </span>
-          <span style={{ color: 'var(--Gm)' }}>{billing?.slab_crossing_date ? `Predicted jump ${new Date(billing.slab_crossing_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : 'No alert yet'}</span>
+        <div className="flex justify-between items-end mb-4">
+          <div>
+            <div className="text-[11px] text-tx-3 mb-0.5">
+              {(billing?.kwh_accumulated || 0).toFixed(0)} measured · {(billing?.kwh_estimated || 0).toFixed(0)} est. total
+            </div>
+            <div className="text-[13px] font-bold text-tx">
+              {(billing?.kwh_estimated || 0).toFixed(0)} units used · {(() => {
+                const est = billing?.kwh_estimated || 0;
+                const SLABS = [
+                  { num: 1, min: 1, max: 100 },
+                  { num: 2, min: 101, max: 200 },
+                  { num: 3, min: 201, max: 400 },
+                  { num: 4, min: 401, max: 500 },
+                ];
+                const current = SLABS.find(s => est >= s.min && est <= s.max) ?? (est > 500 ? SLABS[3] : SLABS[0]);
+                const left = Math.max(0, current.max - est);
+                return left > 0 ? `${left.toFixed(0)} units left in Slab ${current.num}` : `Reached end of Slab ${current.num}`;
+              })()}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] text-tx-3 uppercase font-bold tracking-wider">Est. Bill</div>
+            <div className="text-xl font-bold text-tx">₹{(() => {
+              const est = billing?.kwh_estimated || 0;
+              const SLABS = [
+                { min: 1, max: 100, rate: 0 },
+                { min: 101, max: 200, rate: 2.35 },
+                { min: 201, max: 400, rate: 4.70 },
+                { min: 401, max: 500, rate: 6.30 },
+              ];
+              let bill = 0;
+              SLABS.forEach(s => {
+                if (est >= s.min) {
+                  const unitsInSlab = Math.min(est, s.max) - s.min + 1;
+                  bill += unitsInSlab * s.rate;
+                }
+              });
+              return Math.round(bill).toLocaleString();
+            })()}</div>
+          </div>
         </div>
 
-        <div className="e-divider"></div>
+        <div className="grid grid-cols-4 gap-2 mb-4">
+          {[
+            { num: 1, label: 'Free', min: 1, max: 100, rate: 0, color: '#1D9E75' },
+            { num: 2, label: '₹2.35', min: 101, max: 200, rate: 2.35, color: '#EF9F27' },
+            { num: 3, label: '₹4.70', min: 201, max: 400, rate: 4.70, color: '#E24B4A' },
+            { num: 4, label: '₹6.30', min: 401, max: 500, rate: 6.30, color: '#534AB7' },
+          ].map((s) => {
+            const est = billing?.kwh_estimated || 0;
+            const isSlabNow = est >= s.min && est <= s.max || (s.num === 4 && est > 500);
+            const isSlabDone = est > s.max;
+            const left = Math.max(0, s.max - est);
+
+            return (
+              <div key={s.num} className={`rounded-xl py-2.5 px-1 text-center border-[1.5px] transition-all ${isSlabNow ? '' : 'opacity-60'}`}
+                style={{ background: isSlabNow ? s.color + '10' : (isSlabDone ? s.color + '05' : 'transparent'), borderColor: isSlabNow ? s.color : 'rgba(0,0,0,0.05)' }}>
+                <div className="text-[9px] font-bold uppercase tracking-wider mb-0.5" style={{ color: s.color }}>Slab {s.num}</div>
+                <div className="text-[13px] font-bold text-tx">{s.label}</div>
+                <div className="text-[8px] text-tx-3 mb-1">{s.min}–{s.max} units</div>
+                <div className="text-[9px] font-bold" style={{ color: (isSlabNow || isSlabDone) ? s.color : '#A8A59E' }}>
+                  {isSlabNow ? `Now · ${left.toFixed(0)} left` : (isSlabDone ? 'Done ✓' : 'Soon')}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="bg-surface-2 rounded-xl p-3 border border-black/5 mb-4">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div className="w-5 h-5 rounded-full bg-brand-yellow/20 flex items-center justify-center">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D4880A" strokeWidth="2.5"><path d="M12 2v1M12 21v1M4.22 4.22l.71.71M18.36 18.36l.71.71M2 12h1M21 12h1M4.22 19.78l.71-.71M18.36 5.64l.71-.71M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z" /></svg>
+            </div>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-tx-2">Savings Insight</span>
+          </div>
+          <p className="text-xs text-tx-2 leading-relaxed">
+            {(() => {
+              const est = billing?.kwh_estimated || 0;
+              const meas = billing?.kwh_accumulated || 0;
+              const SLABS = [
+                { num: 1, min: 1, max: 100, rate: 0 },
+                { num: 2, min: 101, max: 200, rate: 2.35 },
+                { num: 3, min: 201, max: 400, rate: 4.70 },
+                { num: 4, min: 401, max: 500, rate: 6.30 },
+              ];
+              const current = SLABS.find(s => est >= s.min && est <= s.max) ?? (est > 500 ? SLABS[3] : SLABS[0]);
+              const left = Math.max(0, current.max - est);
+              
+              const cycleEnd = new Date(billing?.cycle_end)
+              const today = new Date()
+              const dLeft = Math.max(0, Math.ceil((cycleEnd - today) / (1000*60*60*24)))
+              const cycleStart = new Date(billing?.cycle_start)
+              const dElapsed = Math.max(1, Math.ceil((today - cycleStart) / (1000*60*60*24)))
+              const pace = meas / dElapsed
+              const projected = meas + (pace * dLeft)
+
+              if (current.num === 4 && left > 0) {
+                return `Est. total ${est.toFixed(0)} units — ${left.toFixed(0)} units before Slab 4 limit (500 units). At ₹6.30/unit after 400 units.`
+              } else if (current.num < 4 && projected > current.max) {
+                const crossDate = new Date(today)
+                const dToNext = Math.ceil((current.max - meas) / pace)
+                crossDate.setDate(today.getDate() + dToNext)
+                const nextSlab = SLABS[current.num]
+                return `At this rate you'll enter Slab ${nextSlab.num} (₹${nextSlab.rate}/unit) around ${crossDate.toLocaleDateString('en-IN', {day:'numeric', month:'short'})}. Reduce AC by 1–2 hrs/day to stay in Slab ${current.num}.`
+              } else {
+                return `On track. Est. to finish cycle at ${projected.toFixed(0)} units — staying in Slab ${current.num} (₹${current.rate}/unit).`
+              }
+            })()}
+          </p>
+        </div>
 
         <div className="e-proj-row">
           <div className="e-prc" style={{ background: 'var(--s2)' }}>
@@ -636,12 +711,30 @@ export default function Energy() {
           </div>
           <div className="e-prc" style={{ background: 'var(--s2)' }}>
             <div className="e-prc-lbl">Bill est.</div>
-            <div className="e-prc-val">~₹{(calcTNEBCost(billing?.kwh_estimated || 0)).toLocaleString()}</div>
+            <div className="e-prc-val">₹{(() => {
+              const est = billing?.kwh_estimated || 0;
+              const SLABS = [{min:1,max:100,rate:0},{min:101,max:200,rate:2.35},{min:201,max:400,rate:4.70},{min:401,max:500,rate:6.30}];
+              let bill = 0;
+              SLABS.forEach(s => { if (est >= s.min) { const unitsInSlab = Math.min(est, s.max) - s.min + 1; bill += unitsInSlab * s.rate; } });
+              return Math.round(bill).toLocaleString();
+            })()}</div>
           </div>
         </div>
 
         <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 8, lineHeight: 1.5 }}>
-          Based on {((billing?.kwh_accumulated || 0) / cycleDay).toFixed(1)} kWh/day avg · Slab crossing predicted <strong style={{ color: 'var(--Rm)' }}>{billing?.slab_crossing_date ? new Date(billing.slab_crossing_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'soon'}</strong>
+          Based on {((billing?.kwh_accumulated || 0) / cycleDay).toFixed(1)} kWh/day avg · Slab crossing predicted <strong style={{ color: 'var(--Rm)' }}>{(() => {
+            const meas = billing?.kwh_accumulated || 0;
+            const cycleStart = new Date(billing?.cycle_start)
+            const dElapsed = Math.max(1, Math.ceil((new Date() - cycleStart) / (1000*60*60*24)))
+            const pace = meas / dElapsed
+            const SLABS = [{max:100},{max:200},{max:400},{max:500}];
+            const est = billing?.kwh_estimated || 0;
+            const current = SLABS.find(s => est <= s.max) || SLABS[3];
+            const dToNext = Math.ceil((current.max - meas) / pace);
+            const crossDate = new Date();
+            crossDate.setDate(crossDate.getDate() + dToNext);
+            return crossDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+          })()}</strong>
         </div>
       </div>
 

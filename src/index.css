@@ -19,6 +19,9 @@
   /* Hide scrollbar but allow scrolling */
   ::-webkit-scrollbar { display: none; }
   * { scrollbar-width: none; }
+
+  /* Custom Serif Font class */
+  .serif { @apply font-serif; }
 }
 
 @layer components {

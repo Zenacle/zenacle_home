@@ -359,18 +359,6 @@ export default function Reports() {
               })()}
             </div>
 
-            <p className="calc-note">
-              Note: Includes open session from {fmtDate(toISO(new Date(new Date(selectedDate).setDate(new Date(selectedDate).getDate()-1))))} (closed {fmtDate(selectedDate)})<br/>
-              <strong>AC - 1st Floor</strong> (8h 15min | 3.33 units | ₹0) closed 8:16 am.
-            </p>
-
-            <div className="calc-card">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1F3E32" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              <div>
-                <div className="text-[13px] font-bold text-[#1F3E32]">Total Calculation</div>
-                <div className="text-[12px] opacity-70">{fmtDate(selectedDate)} total = 9.90 + 3.33 = {parseFloat(selectedReport.total_kwh || 0).toFixed(2)} units</div>
-              </div>
-            </div>
 
             {selectedReport.open_sessions_count > 0 && (
               <div className="still-on">
@@ -411,7 +399,7 @@ export default function Reports() {
               </div>
               <p className="tip-body">{selectedReport.tip_text}</p>
               <div className="flex items-center justify-between">
-                <button className="tip-btn">Configure Zenacle Schedule</button>
+                <button className="tip-btn">Configure Habtekt Schedule</button>
                 <span className="text-[11px] opacity-40">Feature arriving soon</span>
               </div>
             </div>

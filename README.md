@@ -1,4 +1,4 @@
-# Zenacle Home — PWA
+# Habtekt — PWA
 
 ## Setup (first time)
 

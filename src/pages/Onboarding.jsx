@@ -55,7 +55,7 @@ const slides = [
       </div>
     ),
     heading: <>Savings are the goal.<br /><em className="text-brand-yellow not-italic font-semibold italic">Sustainability</em> follows.</>,
-    body: 'Zenacle turns your resource data into money-saving moves every single month.',
+    body: 'Habtekt turns your resource data into money-saving moves every single month.',
     cta: 'Get started',
   },
 ]
@@ -88,7 +88,7 @@ export default function Onboarding() {
             <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
               <path d="M14 3L3 10v15h8v-8h6v8h8V10L14 3Z" fill="#F5C518"/>
             </svg>
-            <span className="text-white text-xl font-semibold tracking-tight">Zenacle Home</span>
+            <span className="text-white text-xl font-semibold tracking-tight">Habtekt</span>
           </div>
           <span className="text-[#5DCAA5] text-xs">Green Home Intelligence</span>
         </div>
@@ -97,7 +97,7 @@ export default function Onboarding() {
           <svg width="18" height="18" viewBox="0 0 28 28" fill="none">
             <path d="M14 3L3 10v15h8v-8h6v8h8V10L14 3Z" fill="#F5C518"/>
           </svg>
-          <span className="text-white text-sm font-medium">Zenacle Home</span>
+          <span className="text-white text-sm font-medium">Habtekt</span>
         </div>
       )}
 

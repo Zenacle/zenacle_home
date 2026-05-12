@@ -121,14 +121,18 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
           const bd = typeof finalReport.device_type_breakdown === 'string' ? JSON.parse(finalReport.device_type_breakdown) : finalReport.device_type_breakdown
           const devs = bd.today || bd.by_device || bd.by_type || {}
           Object.entries(devs).forEach(([id, d]) => {
-            aggregated[id] = { device_id: id, name: d.name || d.type || id, type: d.type || 'others', kwh: parseFloat(d.kwh || 0), minutes: parseInt(d.minutes || 0, 10), session_count: parseInt(d.sessions || 0, 10) }
+            const resolvedName = deviceNameMap[id]?.name || d.name
+            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
+            aggregated[id] = { device_id: id, name: resolvedName, type: d.type || 'others', kwh: parseFloat(d.kwh || 0), minutes: parseInt(d.minutes || 0, 10), session_count: parseInt(d.sessions || 0, 10) }
           })
           totalHomeSessions = parseInt(finalReport.total_sessions || 0, 10)
         }
         if (isToday && todaySessionsResult.data) {
           todaySessionsResult.data.forEach(s => {
             const id = s.device_id
-            if (!aggregated[id]) aggregated[id] = { device_id: id, name: deviceNameMap[id]?.name || id, type: deviceNameMap[id]?.type || 'others', kwh: 0, minutes: 0, session_count: 0 }
+            const resolvedName = deviceNameMap[id]?.name
+            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
+            if (!aggregated[id]) aggregated[id] = { device_id: id, name: resolvedName, type: deviceNameMap[id]?.type || 'others', kwh: 0, minutes: 0, session_count: 0 }
             aggregated[id].kwh += parseFloat(s.kwh_consumed || 0)
             aggregated[id].minutes += parseInt(s.duration_minutes || 0, 10)
             aggregated[id].session_count += 1
@@ -159,9 +163,11 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
             if (istDate < rollingStartStr || istDate > rollingEndStr) return
 
             const id = s.device_id
+            const resolvedName = deviceNameMap[id]?.name
+            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
             if (!aggregated[id]) {
               aggregated[id] = {
-                device_id: id, name: deviceNameMap[id]?.name || id, type: deviceNameMap[id]?.type || 'others',
+                device_id: id, name: resolvedName, type: deviceNameMap[id]?.type || 'others',
                 kwh: 0, minutes: 0, session_count: 0, sessions: sessionsByDevice[id] || [],
                 weekData: JSON.parse(JSON.stringify(weekTemplate))
               }
@@ -181,24 +187,7 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
         if (isToday && !todayReportResult.data) displayKwh += todaySessionsResult.data?.reduce((s, x) => s + parseFloat(x.kwh_consumed || 0), 0) || 0
         totalHomeSessions = Object.values(aggregated).reduce((s, d) => s + d.session_count, 0)
 
-        // Unassigned/Other
-        weeklyHistoryResult.data?.forEach(r => {
-          const reportKwh = parseFloat(r.total_kwh || 0)
-          let recognized = 0
-          Object.values(aggregated).forEach(dev => {
-            const bar = dev.weekData.find(w => w.date === r.report_date)
-            if (bar) recognized += bar.kwh
-          })
-          const unassigned = reportKwh - recognized
-          if (unassigned > 0.1) {
-            if (!aggregated['unassigned_other']) {
-              aggregated['unassigned_other'] = { device_id: 'unassigned_other', name: 'Other / Unassigned', type: 'others', kwh: 0, minutes: 0, session_count: 0, weekData: JSON.parse(JSON.stringify(weekTemplate)) }
-            }
-            aggregated['unassigned_other'].kwh += unassigned
-            const bar = aggregated['unassigned_other'].weekData.find(w => w.date === r.report_date)
-            if (bar) bar.kwh = unassigned
-          }
-        })
+        // Unassigned/Other — removed: no longer synthesizing an 'Other' bucket
         devices = Object.values(aggregated).filter(d => d.kwh > 0.01 || d.minutes > 0).sort((a, b) => b.kwh - a.kwh)
       } else if (viewMode === 'Billing Cycle') {
         const billingHistoryResult = (billingCycleResult.data?.cycle_start)
@@ -212,7 +201,9 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
           try { bd = typeof report.device_type_breakdown === 'string' ? JSON.parse(report.device_type_breakdown) : (report.device_type_breakdown || {}) } catch (e) { return }
           const devs = bd.today || bd.by_device || bd.by_type || {}
           Object.entries(devs).forEach(([id, d]) => {
-            if (!billingAggregated[id]) billingAggregated[id] = { device_id: id, name: d.name || id, type: d.type || 'others', kwh: 0, minutes: 0, session_count: 0 }
+            const resolvedName = deviceNameMap[id]?.name || d.name
+            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
+            if (!billingAggregated[id]) billingAggregated[id] = { device_id: id, name: resolvedName, type: d.type || 'others', kwh: 0, minutes: 0, session_count: 0 }
             billingAggregated[id].kwh += parseFloat(d.kwh || 0)
             billingAggregated[id].minutes += parseInt(d.minutes || 0, 10)
             billingAggregated[id].session_count += parseInt(d.sessions || 0, 10)
@@ -235,15 +226,64 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
       let weather = null
       try { weather = typeof latestReport?.weather_context === 'string' ? JSON.parse(latestReport.weather_context) : (latestReport?.weather_context ?? null) } catch (e) { }
       const kwhAccumulated = parseFloat(billingCycleResult.data?.kwh_accumulated ?? 0)
+      const kwhEstimated = kwhAccumulated * 1.67
+
+      // 4. Slab Calculation (TNEB)
+      const generateSlabStatus = (measured, estimated) => {
+        const isPart2 = estimated > 500
+        const slabs = isPart2 
+          ? [
+              { name: 'Slab 1', range: '0–100', rate: 'Free', limit: 100 },
+              { name: 'Slab 2', range: '101–400', rate: '₹4.70', limit: 400 },
+              { name: 'Slab 3', range: '401–500', rate: '₹6.30', limit: 500 },
+              { name: 'Slab 4', range: '501–600', rate: '₹8.40', limit: 600 },
+              { name: 'Slab 5', range: '601–800', rate: '₹9.45', limit: 800 },
+              { name: 'Slab 6', range: '801–1000', rate: '₹10.50', limit: 1000 },
+            ]
+          : [
+              { name: 'Slab 1', range: '0–100', rate: 'Free', limit: 100 },
+              { name: 'Slab 2', range: '101–200', rate: '₹2.35', limit: 200 },
+              { name: 'Slab 3', range: '201–400', rate: '₹4.70', limit: 400 },
+              { name: 'Slab 4', range: '401–500', rate: '₹6.30', limit: 500 },
+            ]
+
+        let currentSlabIdx = slabs.findIndex(s => estimated < s.limit)
+        if (currentSlabIdx === -1) currentSlabIdx = slabs.length - 1
+
+        return slabs.map((s, idx) => {
+          const prevLimit = idx === 0 ? 0 : slabs[idx-1].limit
+          const slabMeasured = Math.max(0, Math.min(measured - prevLimit, s.limit - prevLimit))
+          const fillPct = Math.round((slabMeasured / (s.limit - prevLimit)) * 100)
+          
+          return {
+            ...s,
+            active: idx === currentSlabIdx,
+            status: idx < currentSlabIdx ? 'Done ✓' : (idx === currentSlabIdx ? 'Now' : s.range),
+            fillPct
+          }
+        })
+      }
+
+      const slabStatus = generateSlabStatus(kwhAccumulated, kwhEstimated)
+      const currentSlab = slabStatus.find(s => s.active)
+
       setData({
         today: {
           total_kwh: displayKwh, live_kwh: liveTodayKwh, live_sessions: todaySessionsResult.data?.length ?? 0,
           session_count: totalHomeSessions,
           devices, open_sessions: (todaySessionsResult.data || []).filter(s => !s.session_end).map(s => ({ device_id: s.device_id, name: deviceNameMap[s.device_id]?.name || s.device_id, started_ist: new Date(s.session_start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) })),
-          estimated_full_home_kwh: kwhAccumulated * 1.67, estimated_cost_inr: viewMode === 'Billing Cycle' ? 0 : 0, // Simplified
+          estimated_full_home_kwh: kwhEstimated, estimated_cost_inr: viewMode === 'Billing Cycle' ? 0 : 0, 
           report_date: currentDateStr, as_of_ist: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
         },
-        billing: { kwh_accumulated: kwhAccumulated, kwh_estimated: kwhAccumulated * 1.67, cycle_start: billingCycleResult.data?.cycle_start, cycle_end: billingCycleResult.data?.cycle_end },
+        billing: { 
+          kwh_accumulated: kwhAccumulated, 
+          kwh_estimated: kwhEstimated, 
+          cycle_start: billingCycleResult.data?.cycle_start, 
+          cycle_end: billingCycleResult.data?.cycle_end,
+          slab_status: slabStatus,
+          current_slab_name: currentSlab?.name,
+          current_slab_rate: currentSlab?.rate
+        },
         weather, report: latestReport,
         history: weeklyHistoryResult.data || []
       })

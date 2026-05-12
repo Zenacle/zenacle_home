@@ -1,6 +1,6 @@
 {
-  "name": "Zenacle Home",
-  "short_name": "Zenacle",
+  "name": "Habtekt",
+  "short_name": "Habtekt",
   "description": "Smart Appliance & Energy Monitoring Dashboard",
   "start_url": "/",
   "display": "standalone",
