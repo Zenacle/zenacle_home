@@ -1,6 +1,74 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+// ── IST helpers ───────────────────────────────────────────────────────────────
+
+// Returns a YYYY-MM-DD string representing the "active day" in IST,
+// where a day starts at 6:00 AM IST (not midnight).
+// e.g. May 18 03:00 IST → returns '2026-05-17'
+//      May 18 07:00 IST → returns '2026-05-18'
+function getActiveDateStr() {
+  const now = new Date()
+  // Interpret current wall-clock time in IST
+  const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  // Before 6 AM IST → still the previous calendar day
+  if (istNow.getHours() < 6) {
+    istNow.setDate(istNow.getDate() - 1)
+  }
+  const y = istNow.getFullYear()
+  const m = String(istNow.getMonth() + 1).padStart(2, '0')
+  const d = String(istNow.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+// Convert any date to a local YYYY-MM-DD string (no timezone shift)
+function toLocalISO(date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+// Convert an ISO timestamp string to its IST date (YYYY-MM-DD)
+function toISTDate(iso) {
+  if (!iso) return null
+  const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  return toLocalISO(d)
+}
+
+// Returns the 6 AM IST boundary for a given YYYY-MM-DD date string as a UTC Date
+// e.g. '2026-05-17' → May 17 00:30 UTC (= May 17 06:00 IST)
+function dayWindowStart(dateStr) {
+  return new Date(`${dateStr}T00:30:00Z`)
+}
+
+// ── Weekly window helpers ─────────────────────────────────────────────────────
+
+// Given a YYYY-MM-DD active date string, returns the Mon 6AM→Mon 6AM window
+function getWeekWindow(activeDateStr) {
+  // Treat active date as 6 AM IST on that day
+  const activeDate = new Date(`${activeDateStr}T06:00:00+05:30`)
+  const day = activeDate.getDay() // 0=Sun, 1=Mon …
+  const diff = day === 0 ? -6 : 1 - day   // roll back to Monday
+  const monday = new Date(activeDate)
+  monday.setDate(activeDate.getDate() + diff)
+  monday.setHours(0, 0, 0, 0)
+
+  // Monday 6:00 AM IST = Monday 00:30 UTC
+  const weekStart = new Date(monday)
+  weekStart.setUTCHours(0, 30, 0, 0)
+
+  // Next Monday 6:00 AM IST
+  const nextMonday = new Date(monday)
+  nextMonday.setDate(monday.getDate() + 7)
+  const weekEnd = new Date(nextMonday)
+  weekEnd.setUTCHours(0, 30, 0, 0)
+
+  return { weekStart, weekEnd, monday, nextMonday }
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
+
 export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -17,83 +85,132 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
     setError(null)
 
     try {
-      const activeDate = selectedDate ? new Date(`${selectedDate}T23:59:59`) : new Date()
+      // ── 1. Compute active date (respects 6 AM IST boundary) ──────────────
+      // If a selectedDate is passed (Energy page navigating history), use it
+      // directly; otherwise derive from the 6 AM boundary rule.
+      const currentDateStr = selectedDate ?? getActiveDateStr()
 
-      const toLocalISO = (date) => {
-        const y = date.getFullYear()
-        const m = String(date.getMonth() + 1).padStart(2, '0')
-        const d = String(date.getDate()).padStart(2, '0')
-        return `${y}-${m}-${d}`
-      }
+      // ── 2. Live-window boundaries ─────────────────────────────────────────
+      // Daily window: activeDate 6 AM IST → now (always live)
+      const windowStart = dayWindowStart(currentDateStr)  // Mon 00:30 UTC
+      const windowEnd   = new Date()                       // right now
 
-      const toISTDate = (iso) => {
-        if (!iso) return null
-        // Using toLocaleString trick to resolve IST date string correctly
-        const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-        return toLocalISO(d)
-      }
+      // ── 3. Weekly window ──────────────────────────────────────────────────
+      const { weekStart, weekEnd, monday, nextMonday } = getWeekWindow(currentDateStr)
+      const weekStartReportStr = toLocalISO(monday)
+      // Include Mon → Sun in daily_reports (nextMonday - 1 day = Sunday)
+      const weekEndReportStr   = toLocalISO(new Date(nextMonday.getTime() - 24 * 60 * 60 * 1000))
 
-      const currentDateStr = toLocalISO(activeDate)
-      const todayRealStr = toLocalISO(new Date())
-      const isToday = currentDateStr === todayRealStr
+      // ── 4. Rolling 14-day window (for device-name pre-fetch map) ─────────
+      const rollingStartDate = new Date(`${currentDateStr}T00:00:00+05:30`)
+      rollingStartDate.setDate(rollingStartDate.getDate() - 13)
+      const rollingStartStr = toLocalISO(rollingStartDate)
+      const rollingEndStr   = currentDateStr
 
-      // Rolling 14-day window (Today - 13 days)
-      const rollingStart = new Date(activeDate)
-      rollingStart.setDate(activeDate.getDate() - 13)
-      rollingStart.setHours(0, 0, 0, 0)
-      const rollingStartStr = toLocalISO(rollingStart)
-      const rollingEndStr = currentDateStr
-
-      // 6:00 AM IST window for Daily live data
-      const windowStart = new Date(activeDate)
-      windowStart.setHours(6, 0, 0, 0)
-      if (activeDate < windowStart) windowStart.setDate(windowStart.getDate() - 1)
-      const windowStartStr = windowStart.toISOString()
-      const windowEndStr = activeDate.toISOString()
-
-      // 1. Parallel Queries
+      // ── 5. Parallel Queries ───────────────────────────────────────────────
       const [
         todayReportResult,
         weeklyHistoryResult,
         billingCycleResult,
-        todaySessionsResult,
+        dailySessionsResult,    // live sessions inside the 6AM→now window
         allLastCompletedResult,
         allOpenSessionsResult,
-        allSessionsResult,
+        weeklySessionsResult,   // sessions inside Mon 6AM → Mon 6AM window
+        rollingReportsResult,   // 14-day rolling reports for device-name map
       ] = await Promise.all([
-        supabase.from('daily_reports').select('*').eq('household_id', householdId).eq('report_date', currentDateStr).maybeSingle(),
-        supabase.from('daily_reports').select('*').eq('household_id', householdId).gte('report_date', rollingStartStr).lte('report_date', rollingEndStr).order('report_date', { ascending: true }),
-        supabase.from('billing_cycle_summary').select('*').eq('household_id', householdId).lte('cycle_start', currentDateStr).gte('cycle_end', currentDateStr).maybeSingle(),
-        isToday
-          ? supabase.from('appliance_readings').select('*').eq('household_id', householdId).or(`session_end.is.null,session_start.gte.${windowStartStr}`)
-          : Promise.resolve({ data: [] }),
-        supabase.from('appliance_readings').select('*').eq('household_id', householdId).not('session_end', 'is', null).order('device_id').order('session_start', { ascending: false }),
-        supabase.from('appliance_readings').select('*').eq('household_id', householdId).is('session_end', null).order('device_id').order('session_start', { ascending: false }),
-        // Fetch ALL sessions for the rolling 7-day window (explicit IST boundaries)
-        supabase.from('appliance_readings')
+        // Today's finalized report (may not exist yet if before midnight batch)
+        supabase
+          .from('daily_reports')
           .select('*')
           .eq('household_id', householdId)
-          .gte('session_start', new Date(rollingStartStr + 'T00:00:00+05:30').toISOString())
-          .lte('session_start', new Date(rollingEndStr + 'T23:59:59+05:30').toISOString())
+          .eq('report_date', currentDateStr)
+          .maybeSingle(),
+
+        // Weekly daily_reports: Mon → Sun of current week
+        supabase
+          .from('daily_reports')
+          .select('*')
+          .eq('household_id', householdId)
+          .gte('report_date', weekStartReportStr)
+          .lte('report_date', weekEndReportStr)
+          .order('report_date', { ascending: true }),
+
+        // Billing cycle summary
+        supabase
+          .from('billing_cycle_summary')
+          .select('*')
+          .eq('household_id', householdId)
+          .lte('cycle_start', currentDateStr)
+          .gte('cycle_end', currentDateStr)
+          .maybeSingle(),
+
+        // Live sessions: active-day 6 AM IST → now (always fetch — daily window)
+        supabase
+          .from('appliance_readings')
+          .select('*')
+          .eq('household_id', householdId)
+          .gte('session_start', windowStart.toISOString())
+          .lte('session_start', windowEnd.toISOString()),
+
+        // All last-completed sessions per device (for device metadata)
+        supabase
+          .from('appliance_readings')
+          .select('*')
+          .eq('household_id', householdId)
+          .not('session_end', 'is', null)
+          .order('device_id')
           .order('session_start', { ascending: false }),
+
+        // Currently open sessions
+        supabase
+          .from('appliance_readings')
+          .select('*')
+          .eq('household_id', householdId)
+          .is('session_end', null)
+          .order('device_id')
+          .order('session_start', { ascending: false }),
+
+        // Weekly sessions: Mon 6AM IST (inclusive) → next Mon 6AM IST (exclusive)
+        supabase
+          .from('appliance_readings')
+          .select('*')
+          .eq('household_id', householdId)
+          .gte('session_start', weekStart.toISOString())
+          .lt('session_start', weekEnd.toISOString())
+          .order('session_start', { ascending: false }),
+
+        // 14-day rolling reports for building device-name map
+        supabase
+          .from('daily_reports')
+          .select('*')
+          .eq('household_id', householdId)
+          .gte('report_date', rollingStartStr)
+          .lte('report_date', rollingEndStr)
+          .order('report_date', { ascending: true }),
       ])
 
-      // 2. Pre-processing
+      // ── 6. Build device-name map from all available reports ──────────────
       const deviceNameMap = {}
       const fillMeta = (bd) => {
         const devs = bd.today || bd.by_device || bd.by_type || {}
-        Object.entries(devs).forEach(([id, d]) => { if (!deviceNameMap[id]) deviceNameMap[id] = { name: d.name, type: d.type } })
+        Object.entries(devs).forEach(([id, d]) => {
+          if (!deviceNameMap[id]) deviceNameMap[id] = { name: d.name, type: d.type }
+        })
       }
+      rollingReportsResult.data?.forEach(r => {
+        try { fillMeta(typeof r.device_type_breakdown === 'string' ? JSON.parse(r.device_type_breakdown) : (r.device_type_breakdown || {})) } catch (e) {}
+      })
       weeklyHistoryResult.data?.forEach(r => {
-        try { fillMeta(typeof r.device_type_breakdown === 'string' ? JSON.parse(r.device_type_breakdown) : (r.device_type_breakdown || {})) } catch (e) { }
+        try { fillMeta(typeof r.device_type_breakdown === 'string' ? JSON.parse(r.device_type_breakdown) : (r.device_type_breakdown || {})) } catch (e) {}
       })
       if (todayReportResult.data) {
-        try { fillMeta(typeof todayReportResult.data.device_type_breakdown === 'string' ? JSON.parse(todayReportResult.data.device_type_breakdown) : todayReportResult.data.device_type_breakdown) } catch (e) { }
+        try { fillMeta(typeof todayReportResult.data.device_type_breakdown === 'string' ? JSON.parse(todayReportResult.data.device_type_breakdown) : todayReportResult.data.device_type_breakdown) } catch (e) {}
       }
 
+      // Sessions by device (used for weekData per device)
       const sessionsByDevice = {}
-      if (allSessionsResult.data) {
-        allSessionsResult.data.forEach(s => {
+      if (weeklySessionsResult.data) {
+        weeklySessionsResult.data.forEach(s => {
           if (!sessionsByDevice[s.device_id]) sessionsByDevice[s.device_id] = []
           if (sessionsByDevice[s.device_id].length < 15) sessionsByDevice[s.device_id].push(s)
         })
@@ -108,63 +225,77 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
         allOpenSessionsResult.data.forEach(s => { if (!allOpenSessions[s.device_id]) allOpenSessions[s.device_id] = s })
       }
 
-      // 3. Aggregation Logic
+      // ── 7. Aggregation per view mode ──────────────────────────────────────
       let devices = []
-      let liveTodayKwh = 0
+      let liveTodayKwh = 0   // measured kWh from live session window
+      let weeklyKwh = 0      // measured kWh for the whole week
       let displayKwh = 0
       let totalHomeSessions = 0
 
+      // ── Daily ─────────────────────────────────────────────────────────────
       if (viewMode === 'Daily') {
         const aggregated = {}
         const finalReport = todayReportResult.data
+
+        // Seed from finalized report (if exists)
         if (finalReport) {
-          const bd = typeof finalReport.device_type_breakdown === 'string' ? JSON.parse(finalReport.device_type_breakdown) : finalReport.device_type_breakdown
+          const bd = typeof finalReport.device_type_breakdown === 'string'
+            ? JSON.parse(finalReport.device_type_breakdown)
+            : finalReport.device_type_breakdown
           const devs = bd.today || bd.by_device || bd.by_type || {}
           Object.entries(devs).forEach(([id, d]) => {
             const resolvedName = deviceNameMap[id]?.name || d.name
-            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
-            aggregated[id] = { device_id: id, name: resolvedName, type: d.type || 'others', kwh: parseFloat(d.kwh || 0), minutes: parseInt(d.minutes || 0, 10), session_count: parseInt(d.sessions || 0, 10) }
+            if (!resolvedName || resolvedName === id) return
+            aggregated[id] = {
+              device_id: id, name: resolvedName, type: d.type || 'others',
+              kwh: parseFloat(d.kwh || 0), minutes: parseInt(d.minutes || 0, 10),
+              session_count: parseInt(d.sessions || 0, 10)
+            }
           })
           totalHomeSessions = parseInt(finalReport.total_sessions || 0, 10)
         }
-        if (isToday && todaySessionsResult.data) {
-          todaySessionsResult.data.forEach(s => {
+
+        // Overlay live sessions (6 AM IST → now) — always, since window is always live
+        if (dailySessionsResult.data) {
+          dailySessionsResult.data.forEach(s => {
             const id = s.device_id
             const resolvedName = deviceNameMap[id]?.name
-            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
-            if (!aggregated[id]) aggregated[id] = { device_id: id, name: resolvedName, type: deviceNameMap[id]?.type || 'others', kwh: 0, minutes: 0, session_count: 0 }
+            if (!resolvedName || resolvedName === id) return
+            if (!aggregated[id]) aggregated[id] = {
+              device_id: id, name: resolvedName, type: deviceNameMap[id]?.type || 'others',
+              kwh: 0, minutes: 0, session_count: 0
+            }
             aggregated[id].kwh += parseFloat(s.kwh_consumed || 0)
             aggregated[id].minutes += parseInt(s.duration_minutes || 0, 10)
             aggregated[id].session_count += 1
           })
-          totalHomeSessions = todaySessionsResult.data.length
+          totalHomeSessions = dailySessionsResult.data.length
         }
-        devices = Object.values(aggregated).filter(d => d.kwh > 0.001 || d.minutes > 0).sort((a, b) => b.kwh - a.kwh)
+
+        devices = Object.values(aggregated)
+          .filter(d => d.kwh > 0.001 || d.minutes > 0)
+          .sort((a, b) => b.kwh - a.kwh)
+
         liveTodayKwh = devices.reduce((s, d) => s + d.kwh, 0)
-        displayKwh = isToday ? liveTodayKwh : parseFloat(finalReport?.total_kwh || 0)
+        displayKwh = liveTodayKwh
+
+      // ── Weekly ────────────────────────────────────────────────────────────
       } else if (viewMode === 'Weekly') {
-        const weekTemplate = []
         const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        const weekTemplate = []
         for (let i = 0; i < 7; i++) {
-          const d = new Date(rollingStart)
-          d.setDate(rollingStart.getDate() + i)
-          weekTemplate.push({
-            date: toLocalISO(d),
-            day: dayNames[d.getDay()],
-            kwh: 0,
-            mins: 0
-          })
+          const d = new Date(monday)
+          d.setDate(monday.getDate() + i)
+          weekTemplate.push({ date: toLocalISO(d), day: dayNames[d.getDay()], kwh: 0, mins: 0 })
         }
 
         const aggregated = {}
-        if (allSessionsResult.data) {
-          allSessionsResult.data.forEach(s => {
+        if (weeklySessionsResult.data) {
+          weeklySessionsResult.data.forEach(s => {
             const istDate = toISTDate(s.session_start)
-            if (istDate < rollingStartStr || istDate > rollingEndStr) return
-
             const id = s.device_id
             const resolvedName = deviceNameMap[id]?.name
-            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
+            if (!resolvedName || resolvedName === id) return
             if (!aggregated[id]) {
               aggregated[id] = {
                 device_id: id, name: resolvedName, type: deviceNameMap[id]?.type || 'others',
@@ -177,22 +308,33 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
             aggregated[id].kwh += kwh
             aggregated[id].minutes += mins
             aggregated[id].session_count += 1
-
             const bar = aggregated[id].weekData.find(w => w.date === istDate)
             if (bar) { bar.kwh += kwh; bar.mins += mins }
           })
         }
 
-        displayKwh = (weeklyHistoryResult.data || []).reduce((s, r) => s + parseFloat(r.total_kwh || 0), 0)
-        if (isToday && !todayReportResult.data) displayKwh += todaySessionsResult.data?.reduce((s, x) => s + parseFloat(x.kwh_consumed || 0), 0) || 0
-        totalHomeSessions = Object.values(aggregated).reduce((s, d) => s + d.session_count, 0)
+        // Weekly kWh = sum of daily reports for the week + any live sessions today not yet in a report
+        weeklyKwh = (weeklyHistoryResult.data || []).reduce((s, r) => s + parseFloat(r.total_kwh || 0), 0)
+        // If today's report isn't finalized yet, add live session kWh
+        if (!todayReportResult.data && dailySessionsResult.data) {
+          weeklyKwh += dailySessionsResult.data.reduce((s, x) => s + parseFloat(x.kwh_consumed || 0), 0)
+        }
 
-        // Unassigned/Other — removed: no longer synthesizing an 'Other' bucket
+        displayKwh = weeklyKwh
+        totalHomeSessions = Object.values(aggregated).reduce((s, d) => s + d.session_count, 0)
         devices = Object.values(aggregated).filter(d => d.kwh > 0.01 || d.minutes > 0).sort((a, b) => b.kwh - a.kwh)
+
+      // ── Billing Cycle ─────────────────────────────────────────────────────
       } else if (viewMode === 'Billing Cycle') {
-        const billingHistoryResult = (billingCycleResult.data?.cycle_start)
-          ? await supabase.from('daily_reports').select('*').eq('household_id', householdId).gte('report_date', billingCycleResult.data.cycle_start).lte('report_date', currentDateStr)
+        const billingHistoryResult = billingCycleResult.data?.cycle_start
+          ? await supabase
+              .from('daily_reports')
+              .select('*')
+              .eq('household_id', householdId)
+              .gte('report_date', billingCycleResult.data.cycle_start)
+              .lte('report_date', currentDateStr)
           : { data: [] }
+
         const billingAggregated = {}
         let bSessions = 0
         billingHistoryResult.data?.forEach(report => {
@@ -202,18 +344,23 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
           const devs = bd.today || bd.by_device || bd.by_type || {}
           Object.entries(devs).forEach(([id, d]) => {
             const resolvedName = deviceNameMap[id]?.name || d.name
-            if (!resolvedName || resolvedName === id) return  // skip unresolvable devices
+            if (!resolvedName || resolvedName === id) return
             if (!billingAggregated[id]) billingAggregated[id] = { device_id: id, name: resolvedName, type: d.type || 'others', kwh: 0, minutes: 0, session_count: 0 }
             billingAggregated[id].kwh += parseFloat(d.kwh || 0)
             billingAggregated[id].minutes += parseInt(d.minutes || 0, 10)
             billingAggregated[id].session_count += parseInt(d.sessions || 0, 10)
           })
         })
-        devices = Object.values(billingAggregated).filter(d => d.kwh > 0.01 && d.type !== 'geyser').sort((a, b) => b.kwh - a.kwh).slice(0, 3)
+
+        devices = Object.values(billingAggregated)
+          .filter(d => d.kwh > 0.01 && d.type !== 'geyser')
+          .sort((a, b) => b.kwh - a.kwh)
+          .slice(0, 3)
         displayKwh = parseFloat(billingCycleResult.data?.kwh_accumulated ?? 0)
         totalHomeSessions = bSessions
       }
 
+      // ── 8. Attach metadata to each device ────────────────────────────────
       devices.forEach(d => {
         d.totalKwh = d.kwh
         d.totalSessions = d.session_count
@@ -222,39 +369,47 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
         d.openSession = allOpenSessions[d.device_id] || null
         if (d.openSession) d.is_currently_active = true
       })
-      const latestReport = todayReportResult.data || weeklyHistoryResult.data?.[0]
-      let weather = null
-      try { weather = typeof latestReport?.weather_context === 'string' ? JSON.parse(latestReport.weather_context) : (latestReport?.weather_context ?? null) } catch (e) { }
-      const kwhAccumulated = parseFloat(billingCycleResult.data?.kwh_accumulated ?? 0)
-      const kwhEstimated = kwhAccumulated * 1.67
 
-      // 4. Slab Calculation (TNEB)
+      // ── 9. Misc derived values ────────────────────────────────────────────
+      const latestReport = todayReportResult.data || weeklyHistoryResult.data?.[weeklyHistoryResult.data.length - 1]
+      let weather = null
+      try { weather = typeof latestReport?.weather_context === 'string' ? JSON.parse(latestReport.weather_context) : (latestReport?.weather_context ?? null) } catch (e) {}
+
+      const kwhAccumulated = parseFloat(billingCycleResult.data?.kwh_accumulated ?? 0)
+      const kwhEstimated   = kwhAccumulated * 1.67
+
+      // Fix: est. full home is per-mode, not always billing cycle
+      const estimatedFullHomeKwh =
+        viewMode === 'Daily'        ? liveTodayKwh / 0.6 :
+        viewMode === 'Weekly'       ? weeklyKwh / 0.6 :
+                                      kwhAccumulated / 0.6
+
+      // ── 10. Slab Calculation (TNEB) ───────────────────────────────────────
       const generateSlabStatus = (measured, estimated) => {
         const isPart2 = estimated > 500
-        const slabs = isPart2 
+        const slabs = isPart2
           ? [
-              { name: 'Slab 1', range: '0–100', rate: 'Free', limit: 100 },
-              { name: 'Slab 2', range: '101–400', rate: '₹4.70', limit: 400 },
-              { name: 'Slab 3', range: '401–500', rate: '₹6.30', limit: 500 },
-              { name: 'Slab 4', range: '501–600', rate: '₹8.40', limit: 600 },
-              { name: 'Slab 5', range: '601–800', rate: '₹9.45', limit: 800 },
-              { name: 'Slab 6', range: '801–1000', rate: '₹10.50', limit: 1000 },
+              { name: 'Slab 1', range: '0–100',   rate: 'Free',   limit: 100  },
+              { name: 'Slab 2', range: '101–400',  rate: '₹4.70', limit: 400  },
+              { name: 'Slab 3', range: '401–500',  rate: '₹6.30', limit: 500  },
+              { name: 'Slab 4', range: '501–600',  rate: '₹8.40', limit: 600  },
+              { name: 'Slab 5', range: '601–800',  rate: '₹9.45', limit: 800  },
+              { name: 'Slab 6', range: '801–1000', rate: '₹10.50',limit: 1000 },
             ]
           : [
-              { name: 'Slab 1', range: '0–100', rate: 'Free', limit: 100 },
-              { name: 'Slab 2', range: '101–200', rate: '₹2.35', limit: 200 },
-              { name: 'Slab 3', range: '201–400', rate: '₹4.70', limit: 400 },
-              { name: 'Slab 4', range: '401–500', rate: '₹6.30', limit: 500 },
+              { name: 'Slab 1', range: '0–100',   rate: 'Free',   limit: 100 },
+              { name: 'Slab 2', range: '101–200',  rate: '₹2.35', limit: 200 },
+              { name: 'Slab 3', range: '201–400',  rate: '₹4.70', limit: 400 },
+              { name: 'Slab 4', range: '401–500',  rate: '₹6.30', limit: 500 },
             ]
 
         let currentSlabIdx = slabs.findIndex(s => estimated < s.limit)
         if (currentSlabIdx === -1) currentSlabIdx = slabs.length - 1
 
         return slabs.map((s, idx) => {
-          const prevLimit = idx === 0 ? 0 : slabs[idx-1].limit
+          const prevLimit = idx === 0 ? 0 : slabs[idx - 1].limit
           const slabMeasured = Math.max(0, Math.min(measured - prevLimit, s.limit - prevLimit))
           const fillPct = Math.round((slabMeasured / (s.limit - prevLimit)) * 100)
-          
           return {
             ...s,
             active: idx === currentSlabIdx,
@@ -264,30 +419,64 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
         })
       }
 
-      const slabStatus = generateSlabStatus(kwhAccumulated, kwhEstimated)
+      const slabStatus  = generateSlabStatus(kwhAccumulated, kwhEstimated)
       const currentSlab = slabStatus.find(s => s.active)
 
+      // ── 11. Billing cycle display window ──────────────────────────────────
+      const cycleEndDate   = billingCycleResult.data?.cycle_end ? new Date(billingCycleResult.data.cycle_end) : null
+      const nowForCycle    = new Date()
+      const cycleDisplayEnd = (cycleEndDate && nowForCycle < cycleEndDate) ? nowForCycle : cycleEndDate
+      const cycleDaysLeft   = cycleEndDate
+        ? Math.max(0, Math.ceil((cycleEndDate - nowForCycle) / (1000 * 60 * 60 * 24)))
+        : 0
+
+      // ── 12. Set data ──────────────────────────────────────────────────────
       setData({
         today: {
-          total_kwh: displayKwh, live_kwh: liveTodayKwh, live_sessions: todaySessionsResult.data?.length ?? 0,
+          total_kwh: displayKwh,
+          live_kwh: liveTodayKwh,
+          live_sessions: dailySessionsResult.data?.length ?? 0,
           session_count: totalHomeSessions,
-          devices, open_sessions: (todaySessionsResult.data || []).filter(s => !s.session_end).map(s => ({ device_id: s.device_id, name: deviceNameMap[s.device_id]?.name || s.device_id, started_ist: new Date(s.session_start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) })),
-          estimated_full_home_kwh: kwhEstimated, estimated_cost_inr: viewMode === 'Billing Cycle' ? 0 : 0, 
-          report_date: currentDateStr, as_of_ist: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+          devices,
+          // Open sessions = those in the live daily window with no end time
+          open_sessions: (dailySessionsResult.data || [])
+            .filter(s => !s.session_end)
+            .map(s => ({
+              device_id: s.device_id,
+              name: deviceNameMap[s.device_id]?.name || s.device_id,
+              started_ist: new Date(s.session_start).toLocaleTimeString('en-IN', {
+                hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata'
+              })
+            })),
+          estimated_full_home_kwh: estimatedFullHomeKwh,
+          estimated_cost_inr: 0,
+          report_date: currentDateStr,
+          as_of_ist: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
         },
-        billing: { 
-          kwh_accumulated: kwhAccumulated, 
-          kwh_estimated: kwhEstimated, 
-          cycle_start: billingCycleResult.data?.cycle_start, 
+        billing: {
+          kwh_accumulated: kwhAccumulated,
+          kwh_estimated: kwhEstimated,
+          cycle_start: billingCycleResult.data?.cycle_start,
           cycle_end: billingCycleResult.data?.cycle_end,
+          cycle_display_end: cycleDisplayEnd,
+          cycle_days_left: cycleDaysLeft,
           slab_status: slabStatus,
           current_slab_name: currentSlab?.name,
           current_slab_rate: currentSlab?.rate
         },
-        weather, report: latestReport,
+        // Week window exposed so Home.jsx can render the correct label
+        weekWindow: { monday, nextMonday },
+        weather,
+        report: latestReport,
         history: weeklyHistoryResult.data || []
       })
-    } catch (err) { setError(err); console.error(err) } finally { setLoading(false) }
+
+    } catch (err) {
+      setError(err)
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return { data, loading, error, refetch: fetchAll }
