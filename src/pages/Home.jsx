@@ -30,7 +30,7 @@ function Skeleton({ className = '' }) {
 }
 
 // ── EnergyCard — now reads `today.devices` (clean array) ──────────────────────
-function EnergyCard({ today, viewMode, toggleViewMode, weekWindow, billing }) {
+function EnergyCard({ today, viewMode, toggleViewMode, weekWindow, billing, history }) {
   const [isOpen, setIsOpen] = useState(false)
   
   const devices = today?.devices || []
@@ -209,27 +209,59 @@ function EnergyCard({ today, viewMode, toggleViewMode, weekWindow, billing }) {
           </Link>
         </div>
         {(() => {
-          // ── Estimated cost — uses shared TNEB helpers (same as BillingCard) ──
-          // Slab position is driven by kwh_estimated (projected cycle end),
-          // which auto-switches between the 4-slab (≤500) and 7-slab (>500) tables.
-          const cycleEstimated   = parseFloat(billing?.kwh_estimated   ?? 0)
-          const cycleAccumulated = parseFloat(billing?.kwh_accumulated  ?? 0)
-          const estKwh           = parseFloat(today?.estimated_full_home_kwh ?? 0)
-
-          // getCurrentSlab and calculateTNEBBill are defined at module level below
-          const activeSlab = getCurrentSlab(cycleEstimated)
-          const currentRate = activeSlab.rate
-
-          let displayCost = 0
-          if (viewMode === 'Billing Cycle') {
-            // Full cumulative bill on the measured units so far
-            displayCost = calculateTNEBBill(cycleAccumulated)
-          } else {
-            // Daily / Weekly: estimated full-home kWh × current slab rate
-            displayCost = Math.round(estKwh * currentRate)
+          // ── Fix: isolated daily cost calculation ──────────────────────────────────────────
+          function getDailySlabRate(units) {
+            if (units <= 100) return { slab: 1, rate: 2.35 }
+            if (units <= 200) return { slab: 2, rate: 2.35 }
+            if (units <= 400) return { slab: 3, rate: 4.7 }
+            if (units <= 500) return { slab: 4, rate: 6.3 }
+            return { slab: 5, rate: 8.4 }
           }
 
-          const isFree = currentRate === 0
+          const cycleAccumulated = parseFloat(billing?.kwh_accumulated ?? 0)
+          const estKwh           = parseFloat(today?.estimated_full_home_kwh ?? 0)
+          const cycleEstimated   = parseFloat(billing?.kwh_estimated ?? 0)
+
+          let displayCost = 0
+          let activeSlab = getCurrentSlab(cycleEstimated) // fallback for cycle
+          let currentRate = activeSlab.rate
+          let isFree = currentRate === 0
+
+          if (viewMode === 'Billing Cycle') {
+            displayCost = calculateTNEBBill(cycleAccumulated)
+          } else if (viewMode === 'Weekly') {
+            let weeklyEst = 0
+            if (history) {
+              history.forEach(report => {
+                const measured = parseFloat(report.total_kwh || 0)
+                const coverage = parseFloat(report.coverage_ratio || 1)
+                const estimated = coverage > 0 ? measured / coverage : measured
+                const slabInfo = getDailySlabRate(estimated)
+                weeklyEst += estimated * slabInfo.rate
+              })
+            }
+            // Add today if not in history yet
+            const activeDateStr = today?.report_date
+            const lastHistoryDate = history?.[history.length - 1]?.report_date
+            if (lastHistoryDate !== activeDateStr) {
+              const todaySlab = getDailySlabRate(estKwh)
+              weeklyEst += estKwh * todaySlab.rate
+            }
+            displayCost = Math.round(weeklyEst)
+            
+            // For weekly display, use today's rate as fallback for the subtitle
+            const todaySlabInfo = getDailySlabRate(estKwh)
+            activeSlab = { num: todaySlabInfo.slab }
+            currentRate = todaySlabInfo.rate
+            isFree = currentRate === 0
+          } else {
+            const todaySlabInfo = getDailySlabRate(estKwh)
+            displayCost = Math.round(estKwh * todaySlabInfo.rate)
+            activeSlab = { num: todaySlabInfo.slab }
+            currentRate = todaySlabInfo.rate
+            isFree = currentRate === 0
+          }
+
           if (estKwh <= 0 && viewMode !== 'Billing Cycle') return null
 
           return (
@@ -749,6 +781,7 @@ export default function Home() {
               toggleViewMode={handleViewModeChange}
               weekWindow={data?.weekWindow}
               billing={data?.billing}
+              history={data?.history}
             />
             {/* ✅ passing billing not cycle */}
             <BillingCard

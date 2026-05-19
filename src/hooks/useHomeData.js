@@ -384,6 +384,38 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
         viewMode === 'Weekly'       ? weeklyKwh / 0.6 :
                                       kwhAccumulated / 0.6
 
+      // ── Rolling 7-day average (reuses already-fetched rollingReportsResult) ──
+      // Reverse so index 0 = most-recent day
+      const allRollingReports     = [...(rollingReportsResult.data ?? [])].reverse()
+      const reportsExcludingToday = allRollingReports.filter(r => r.report_date !== currentDateStr)
+
+      // Filter out zero/away days so they don't pull the average down
+      const nonZeroLast7 = reportsExcludingToday
+        .slice(0, 7)
+        .filter(r => parseFloat(r.total_kwh ?? 0) > 0)
+
+      // Require ≥3 data points for a meaningful average; return 0 → no badge shown
+      const avg7DayKwh = nonZeroLast7.length >= 3
+        ? nonZeroLast7.reduce((s, r) => s + parseFloat(r.total_kwh ?? 0), 0) / nonZeroLast7.length
+        : 0
+
+      // Last week total (days 8–14 before today)
+      const lastWeekKwh = reportsExcludingToday
+        .slice(7, 14)
+        .reduce((s, r) => s + parseFloat(r.total_kwh ?? 0), 0)
+
+      const belowThreshold = avg7DayKwh > 0 ? avg7DayKwh * 0.75 : 0
+      const aboveThreshold = avg7DayKwh > 0 ? avg7DayKwh * 1.25 : 0
+
+      // Billing-cycle daily average
+      const _cycleStartDate  = new Date(billingCycleResult.data?.cycle_start ?? currentDateStr)
+      const _todayDateForAvg = new Date(currentDateStr)
+      const _daysElapsed     = Math.max(1, Math.ceil((_todayDateForAvg - _cycleStartDate) / (1000 * 60 * 60 * 24)))
+      const cycleDailyAvg    = _daysElapsed > 0 ? kwhAccumulated / _daysElapsed : 0
+
+      console.log('[useHomeData] avg7Day:', avg7DayKwh.toFixed(2),
+        'below:', belowThreshold.toFixed(2), 'above:', aboveThreshold.toFixed(2))
+
       // ── 10. Slab Calculation (TNEB) ───────────────────────────────────────
       const generateSlabStatus = (measured, estimated) => {
         const isPart2 = estimated > 500
@@ -451,7 +483,13 @@ export function useHomeData(householdId, viewMode = 'Daily', selectedDate = null
           estimated_full_home_kwh: estimatedFullHomeKwh,
           estimated_cost_inr: 0,
           report_date: currentDateStr,
-          as_of_ist: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+          as_of_ist: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+          // Rolling-average badge fields
+          avg_7day_kwh:    parseFloat(avg7DayKwh.toFixed(2)),
+          last_week_kwh:   parseFloat(lastWeekKwh.toFixed(2)),
+          cycle_daily_avg: parseFloat(cycleDailyAvg.toFixed(2)),
+          below_threshold: parseFloat(belowThreshold.toFixed(2)),
+          above_threshold: parseFloat(aboveThreshold.toFixed(2)),
         },
         billing: {
           kwh_accumulated: kwhAccumulated,

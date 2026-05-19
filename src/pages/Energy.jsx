@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import BottomNav from '../components/BottomNav'
 import { useAuth } from '../context/AuthContext'
 import { useHomeData } from '../hooks/useHomeData'
 import EnergyGraph from '../components/EnergyGraph'
+import { supabase } from '../lib/supabase'
 
 const DAYS = [
   {
@@ -94,26 +95,71 @@ function fmt(mins) {
   return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : (`${m}m`)
 }
 
-function calcTNEBCost(units) {
-  if (units <= 0) return 0
-  if (units <= 500) {
-    // Part 1: ≤500 units
-    let cost = 0
-    if (units > 100) cost += Math.min(units - 100, 100) * 2.35  // 101–200
-    if (units > 200) cost += Math.min(units - 200, 200) * 4.70  // 201–400
-    if (units > 400) cost += Math.min(units - 400, 100) * 6.30  // 401–500
-    return Math.round(cost)
-  } else {
-    // Part 2: >500 units — entire consumption recalculated at new rates
-    let cost = 0
-    // 1–100: Free
-    if (units > 100) cost += Math.min(units - 100, 300) * 4.70  // 101–400
-    if (units > 400) cost += Math.min(units - 400, 100) * 6.30  // 401–500
-    if (units > 500) cost += Math.min(units - 500, 100) * 8.40  // 501–600
-    if (units > 600) cost += Math.min(units - 600, 200) * 9.45  // 601–800
-    if (units > 800) cost += Math.min(units - 800, 200) * 10.50 // 801–1000
-    return Math.round(cost)
+// ── TNEB Slab data (aligned with Home page) ──────────────────────────────────
+const SLABS_BELOW_500 = [
+  { num: 1, min: 1,   max: 100, rate: 0,    color: '#1D9E75', label: 'Free'   },
+  { num: 2, min: 101, max: 200, rate: 2.35, color: '#EF9F27', label: '₹2.35' },
+  { num: 3, min: 201, max: 400, rate: 4.70, color: '#E24B4A', label: '₹4.70' },
+  { num: 4, min: 401, max: 500, rate: 6.30, color: '#534AB7', label: '₹6.30' },
+]
+
+const SLABS_ABOVE_500 = [
+  { num: 1, min: 1,    max: 100,   rate: 0,     color: '#1D9E75', label: 'Free'    },
+  { num: 2, min: 101,  max: 400,   rate: 4.70,  color: '#EF9F27', label: '₹4.70'  },
+  { num: 3, min: 401,  max: 500,   rate: 6.30,  color: '#E24B4A', label: '₹6.30'  },
+  { num: 4, min: 501,  max: 600,   rate: 8.40,  color: '#534AB7', label: '₹8.40'  },
+  { num: 5, min: 601,  max: 800,   rate: 9.45,  color: '#185FA5', label: '₹9.45'  },
+  { num: 6, min: 801,  max: 1000,  rate: 10.50, color: '#0F6E56', label: '₹10.50' },
+  { num: 7, min: 1001, max: 99999, rate: 11.55, color: '#993C1D', label: '₹11.55' },
+]
+
+function getSlabs(units) { return units <= 500 ? SLABS_BELOW_500 : SLABS_ABOVE_500 }
+
+function calculateTNEBBill(units) {
+  if (!units || units <= 0) return 0
+  const slabs = getSlabs(units)
+  let total = 0
+  for (const slab of slabs) {
+    if (units < slab.min) break
+    const inSlab = Math.min(units, slab.max) - slab.min + 1
+    total += inSlab * slab.rate
   }
+  return Math.round(total)
+}
+
+function calculateSubsidized(units) {
+  if (!units || units <= 0) return 0
+  let total = 0
+  for (const slab of SLABS_BELOW_500) {
+    if (units < slab.min) break
+    const inSlab = Math.min(units, slab.max) - slab.min + 1
+    total += inSlab * slab.rate
+  }
+  return Math.round(total)
+}
+
+function calculateHighUsage(units) {
+  if (!units || units <= 0) return 0
+  let total = 0
+  for (const slab of SLABS_ABOVE_500) {
+    if (units < slab.min) break
+    const inSlab = Math.min(units, slab.max) - slab.min + 1
+    total += inSlab * slab.rate
+  }
+  return Math.round(total)
+}
+
+function calculateDailyCost(units) {
+  if (units <= 500) {
+    return calculateSubsidized(units)
+  } else {
+    return calculateHighUsage(units)
+  }
+}
+
+function getCurrentSlab(units) {
+  const slabs = getSlabs(units)
+  return slabs.find(s => units >= s.min && units <= s.max) ?? slabs[slabs.length - 1]
 }
 
 function EnergyHeader({ cycleDay, startDate, endDate, slabRate, slabName }) {
@@ -135,15 +181,148 @@ function EnergyHeader({ cycleDay, startDate, endDate, slabRate, slabName }) {
   )
 }
 
+// Returns the active date string honouring the 6 AM IST boundary
+// (mirrors getActiveDateStr in useHomeData.js)
+function getActiveDateStr() {
+  const now = new Date()
+  const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  if (istNow.getHours() < 6) istNow.setDate(istNow.getDate() - 1)
+  const y = istNow.getFullYear()
+  const m = String(istNow.getMonth() + 1).padStart(2, '0')
+  const d = String(istNow.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 export default function Energy() {
   const { household } = useAuth()
-  
+
+  // activeDateStr respects the 6 AM IST boundary (same rule as the hook)
+  const activeDateStr = getActiveDateStr()
+  // todayStr is the raw calendar date (used only for the date-picker max)
   const todayStr = new Date().toISOString().split('T')[0]
-  
+
   const [viewMode, setViewMode] = useState('Daily')
-  const [selectedDateStr, setSelectedDateStr] = useState(todayStr)
+  const [selectedDateStr, setSelectedDateStr] = useState(activeDateStr)
 
   const { data, loading, error } = useHomeData(household?.id, viewMode, selectedDateStr)
+
+  const [dailyReport, setDailyReport] = useState(null)
+  const [dailyReportLoading, setDailyReportLoading] = useState(false)
+
+  const selectedDate = useMemo(() => new Date(selectedDateStr), [selectedDateStr])
+
+  const fetchDailyEnergyData = async () => {
+    if (!household?.id) return
+    setDailyReportLoading(true)
+    try {
+      const { data: report } = await supabase
+        .from('daily_reports')
+        .select('*')
+        .eq('household_id', household.id)
+        .eq('report_date', selectedDateStr)
+        .maybeSingle()
+
+      setDailyReport(report || null)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setDailyReportLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchDailyEnergyData()
+  }, [selectedDate, household?.id])
+
+  // Daily mode data processing
+  const isLiveDate = selectedDateStr === activeDateStr
+  // Use instant history data if available (last 14 days), otherwise fallback to the separate fetch
+  const historyReport = data?.history?.find(h => h.report_date === selectedDateStr)
+  const activeDailyReport = historyReport || dailyReport
+
+  const dailyMeasuredKwh = isLiveDate
+    ? parseFloat(data?.today?.total_kwh || 0)
+    : parseFloat(activeDailyReport?.total_kwh || 0)
+
+  const dailyCoverage = isLiveDate
+    ? 0.6
+    : parseFloat(activeDailyReport?.coverage_ratio || 1)
+
+  const dailyEstimatedFullHome = isLiveDate
+    ? parseFloat(data?.today?.estimated_full_home_kwh || 0)
+    : (dailyCoverage > 0 ? dailyMeasuredKwh / dailyCoverage : dailyMeasuredKwh)
+
+  // ── Fix: isolated daily cost calculation ──────────────────────────────────────────
+  // Use the selected date's estimated full home kWh to determine the slab.
+  function getDailySlabRate(units) {
+    if (units <= 100) return { slab: 1, rate: 2.35 }
+    if (units <= 200) return { slab: 2, rate: 2.35 }
+    if (units <= 400) return { slab: 3, rate: 4.7 }
+    if (units <= 500) return { slab: 4, rate: 6.3 }
+    return { slab: 5, rate: 8.4 }
+  }
+
+  const _dailySlabInfo = getDailySlabRate(dailyEstimatedFullHome)
+  const dailyEstimatedCost = Math.round(dailyEstimatedFullHome * _dailySlabInfo.rate)
+  const dailyCostSub = `Slab ${_dailySlabInfo.slab} · ₹${_dailySlabInfo.rate}/unit`
+
+  const dailyReportBreakdown = useMemo(() => {
+    let breakdown = {}
+    try {
+      breakdown = typeof activeDailyReport?.device_type_breakdown === 'string'
+        ? JSON.parse(activeDailyReport.device_type_breakdown)
+        : (activeDailyReport?.device_type_breakdown || {})
+    } catch (e) {
+      console.error(e)
+    }
+    return breakdown
+  }, [activeDailyReport])
+
+  const dailyDevices = useMemo(() => {
+    if (isLiveDate && data?.today?.devices) {
+      return data.today.devices.map(d => ({
+        name: d.name,
+        kwh: parseFloat(d.kwh || 0),
+        minutes: parseInt(d.minutes || 0, 10),
+        type: d.type || 'Unknown Device'
+      }))
+    }
+    const devs = dailyReportBreakdown.today || dailyReportBreakdown.by_device || dailyReportBreakdown.by_type || {}
+    if (Array.isArray(devs)) {
+      return devs.map(d => ({
+        name: d.name || d.type || 'Unknown Device',
+        kwh: parseFloat(d.kwh || 0),
+        minutes: parseInt(d.minutes || 0, 10),
+        ...d
+      }))
+    }
+    return Object.entries(devs).map(([key, val]) => ({
+      device_id: key,
+      name: val.name || val.type || key,
+      kwh: parseFloat(val.kwh || 0),
+      minutes: parseInt(val.minutes || 0, 10),
+      sessions: parseInt(val.sessions || 0, 10),
+      ...val
+    }))
+  }, [dailyReportBreakdown])
+
+  const topDevice = useMemo(() => {
+    if (!dailyDevices || dailyDevices.length === 0) return null
+    return [...dailyDevices].sort((a, b) => b.kwh - a.kwh)[0]
+  }, [dailyDevices])
+
+  const dailyDevicesMapped = useMemo(() => {
+    return dailyDevices.map((dev, i) => ({
+      name: dev.name,
+      loc: dev.type || 'Unknown Loc',
+      mins: dev.minutes,
+      kwh: dev.kwh,
+      pct: (dailyMeasuredKwh > 0) ? (dev.kwh / dailyMeasuredKwh * 100) : 0,
+      color: ['var(--Am)','#1A5FB4','var(--Gm)'][i] || '#888',
+      ico: dev.name.toLowerCase().includes('ac') ? 'ac' : 'pump',
+      carried: null
+    }))
+  }, [dailyDevices, dailyMeasuredKwh])
 
   useEffect(() => {
     document.documentElement.style.setProperty('--bg', '#F2EFE9')
@@ -175,7 +354,7 @@ export default function Energy() {
 
   const handleTab = (mode) => {
     setViewMode(mode)
-    setSelectedDateStr(todayStr)
+    setSelectedDateStr(activeDateStr)
   }
 
   const shiftDate = (direction) => {
@@ -187,16 +366,18 @@ export default function Energy() {
     setSelectedDateStr(d.toISOString().split('T')[0])
   }
 
-  const isTodayStr = selectedDateStr === todayStr
-  const isCurrentWeek = selectedDateStr >= todayStr
-  const isCurrentCycle = data?.billing?.cycle_end ? data.billing.cycle_end >= todayStr : selectedDateStr >= todayStr
+  // ── Fix 2 & 4: use activeDateStr (6 AM IST boundary) not raw todayStr ───────
+  const isTodayStr    = isLiveDate                         // keep alias for other code
+  const isCurrentWeek = selectedDateStr >= activeDateStr
+  const isCurrentCycle = data?.billing?.cycle_end ? data.billing.cycle_end >= activeDateStr : selectedDateStr >= activeDateStr
   const isCurrentYear = new Date(selectedDateStr).getFullYear() === new Date().getFullYear()
 
-  const disableNext = 
-    viewMode === 'Daily' ? isTodayStr :
-    viewMode === 'Weekly' ? isCurrentWeek :
-    viewMode === 'Billing Cycle' ? isCurrentCycle :
-    viewMode === 'Yearly' ? isCurrentYear : false
+  // Fix 4: > button disabled when already at the active (latest) date
+  const disableNext =
+    viewMode === 'Daily'          ? isLiveDate :
+    viewMode === 'Weekly'         ? isCurrentWeek :
+    viewMode === 'Billing Cycle'  ? isCurrentCycle :
+    viewMode === 'Yearly'         ? isCurrentYear : false
 
   let navLabel = ''
   if (viewMode === 'Daily') {
@@ -223,16 +404,64 @@ export default function Energy() {
     navLabel = new Date(selectedDateStr).getFullYear().toString()
   }
 
+  const billing = data?.billing
+  const cycleStart = billing?.cycle_start ? new Date(billing.cycle_start) : null
+  const cycleEnd = billing?.cycle_end ? new Date(billing.cycle_end) : null
+  const currentTime = isTodayStr ? new Date() : new Date(selectedDateStr)
+
+  const cycleDay = (cycleStart && cycleEnd)
+    ? Math.min(Math.floor((currentTime - cycleStart) / (1000 * 60 * 60 * 24)) + 1, Math.floor((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24)) + 1)
+    : '—'
+
+  // Dynamic TNEB cost and slab computations
+  const cycleEstimated   = parseFloat(billing?.kwh_estimated ?? 0)
+  const cycleAccumulated = parseFloat(billing?.kwh_accumulated ?? 0)
+  const estKwh           = parseFloat(data?.today?.estimated_full_home_kwh ?? 0)
+
+  const activeSlab = getCurrentSlab(cycleEstimated)
+  const currentRate = activeSlab.rate
+
+  let calculatedCost = 0
+  let weeklyCostSub = ''
+  if (viewMode === 'Billing Cycle') {
+    calculatedCost = calculateTNEBBill(cycleAccumulated)
+  } else if (viewMode === 'Weekly') {
+    let weeklyEst = 0
+    // Sum historical days
+    if (data?.history) {
+      data.history.forEach(report => {
+        const measured = parseFloat(report.total_kwh || 0)
+        const coverage = parseFloat(report.coverage_ratio || 1)
+        const estimated = coverage > 0 ? measured / coverage : measured
+        const slabInfo = getDailySlabRate(estimated)
+        weeklyEst += estimated * slabInfo.rate
+      })
+    }
+    // Check if today is already in history, if not add it
+    const lastHistoryDate = data?.history?.[data.history.length - 1]?.report_date
+    if (lastHistoryDate !== activeDateStr && viewMode === 'Weekly') {
+      const todayEst = parseFloat(data?.today?.estimated_full_home_kwh ?? 0)
+      const todaySlab = getDailySlabRate(todayEst)
+      weeklyEst += todayEst * todaySlab.rate
+    }
+    calculatedCost = Math.round(weeklyEst)
+    weeklyCostSub = 'Sum of daily costs'
+  } else {
+    calculatedCost = Math.round(estKwh * currentRate)
+  }
+
   const mockD = DAYS[5]
 
   const d = {
     label: navLabel,
-    kwh: parseFloat(data?.today?.total_kwh ?? 0),
-    est: parseFloat(data?.today?.estimated_full_home_kwh ?? 0),
-    cost: `₹${Math.round(data?.today?.estimated_cost_inr ?? 0)}`,
-    runtime: mockD.runtime,
-    costSub: mockD.costSub,
-    devices: (data?.today?.devices ?? []).map((dev, i) => ({
+    kwh: viewMode === 'Daily' ? dailyMeasuredKwh : parseFloat(data?.today?.total_kwh ?? 0),
+    est: viewMode === 'Daily' ? dailyEstimatedFullHome : estKwh,
+    cost: viewMode === 'Daily' ? `₹${dailyEstimatedCost.toLocaleString()}` : `₹${calculatedCost.toLocaleString()}`,
+    runtime: viewMode === 'Daily' ? (topDevice ? fmt(topDevice.minutes) : '—') : mockD.runtime,
+    costSub: viewMode === 'Daily' ? dailyCostSub : (viewMode === 'Weekly' ? weeklyCostSub : (activeSlab.rate === 0
+      ? `Free slab · ₹0/unit`
+      : `Slab ${activeSlab.num} · ₹${activeSlab.rate}/unit`)),
+    devices: viewMode === 'Daily' ? dailyDevicesMapped : (data?.today?.devices ?? []).map((dev, i) => ({
       name: dev.name,
       loc: dev.type || 'Unknown Loc',
       mins: dev.minutes,
@@ -242,25 +471,25 @@ export default function Energy() {
       ico: dev.name.toLowerCase().includes('ac') ? 'ac' : 'pump',
       carried: null
     })),
-    openSession: data?.today?.open_sessions?.[0] ? {
-      name: data.today.open_sessions[0].name,
-      since: data.today.open_sessions[0].started_ist,
-    } : null,
+    openSession: viewMode === 'Daily' 
+      ? (isTodayStr && data?.today?.open_sessions?.[0] ? {
+          name: data.today.open_sessions[0].name,
+          since: data.today.open_sessions[0].started_ist,
+        } : null)
+      : (data?.today?.open_sessions?.[0] ? {
+          name: data.today.open_sessions[0].name,
+          since: data.today.open_sessions[0].started_ist,
+        } : null),
     tip: {
-      head: data?.report?.tip_text ?? 'No data recorded for this date',
-      body: data?.report?.tip_text ? 'Insights are generated algorithmically based on session length compared to similar historical weather points. See BEE recommendations for saving tips.' : '',
+      head: viewMode === 'Daily'
+        ? (dailyReport?.tip_text ?? 'No data recorded for this date')
+        : (data?.report?.tip_text ?? 'No data recorded for this date'),
+      body: viewMode === 'Daily'
+        ? (dailyReport?.tip_text ? 'Insights are generated algorithmically based on session length compared to similar historical weather points. See BEE recommendations for saving tips.' : '')
+        : (data?.report?.tip_text ? 'Insights are generated algorithmically based on session length compared to similar historical weather points. See BEE recommendations for saving tips.' : ''),
       kwh: '', time: ''
     }
   }
-
-  const billing = data?.billing
-  const cycleStart = billing?.cycle_start ? new Date(billing.cycle_start) : null
-  const cycleEnd = billing?.cycle_end ? new Date(billing.cycle_end) : null
-  const currentTime = isTodayStr ? new Date() : new Date(selectedDateStr)
-  
-  const cycleDay = (cycleStart && cycleEnd)
-    ? Math.min(Math.floor((currentTime - cycleStart) / (1000 * 60 * 60 * 24)) + 1, Math.floor((cycleEnd - cycleStart) / (1000 * 60 * 60 * 24)) + 1)
-    : '—'
     
   const startFmt = cycleStart ? cycleStart.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: new Date().getFullYear() !== cycleStart.getFullYear() ? 'numeric' : undefined }) : '—'
   const endFmt = cycleEnd ? cycleEnd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: new Date().getFullYear() !== cycleEnd.getFullYear() ? 'numeric' : undefined }) : '—'
@@ -269,7 +498,32 @@ export default function Energy() {
     ? Math.max(0, Math.ceil((cycleEnd - currentTime) / (1000 * 60 * 60 * 24)))
     : '—'
 
-  const cmpStatus = isTodayStr ? 'highest' : d.kwh < 13 ? 'below' : 'average'
+  // ── Dynamic performance badge ─────────────────────────────────────────
+  function getDailyBadge(kwh) {
+    if (!kwh || kwh === 0) return null
+    if (kwh <= 5)  return { label: 'low',           icon: '↓↓', bg: '#EAF3DE', color: '#27500A' }
+    if (kwh <= 8)  return { label: 'below average', icon: '↓',  bg: '#EAF3DE', color: '#27500A' }
+    if (kwh <= 12) return { label: 'average day',   icon: '~',  bg: '#F1EFE8', color: '#444441' }
+    if (kwh < 15)  return { label: 'above average', icon: '↑',  bg: '#FCEBEB', color: '#791F1F' }
+    return             { label: 'high',          icon: '↑↑', bg: '#FCEBEB', color: '#791F1F' }
+  }
+  function getWeeklyBadge(thisWeek, lastWeek) {
+    if (!lastWeek || lastWeek === 0) return null
+    const pct = Math.round(((thisWeek - lastWeek) / lastWeek) * 100)
+    if (pct <= -10) return { label: `${Math.abs(pct)}% less than last week`, icon: '↓', bg: '#EAF3DE', color: '#27500A' }
+    if (pct >= 10)  return { label: `${pct}% more than last week`,           icon: '↑', bg: '#FCEBEB', color: '#791F1F' }
+    return               { label: 'similar to last week',                   icon: '~', bg: '#F1EFE8', color: '#444441' }
+  }
+
+  const _lastWeekKwh   = parseFloat(data?.today?.last_week_kwh   ?? 0)
+  const _cycleDailyAvg = parseFloat(data?.today?.cycle_daily_avg ?? 0)
+
+  const badge =
+    viewMode === 'Daily'
+      ? getDailyBadge(dailyMeasuredKwh)
+      : viewMode === 'Weekly'
+        ? getWeeklyBadge(parseFloat(data?.today?.total_kwh ?? 0), _lastWeekKwh)
+        : getDailyBadge(_cycleDailyAvg)
 
   return (
     <div className="min-h-screen bg-[var(--bg)] pb-24">
@@ -380,8 +634,8 @@ export default function Energy() {
         cycleDay={cycleDay}
         startDate={startFmt}
         endDate={endFmt}
-        slabName={billing?.current_slab_name || '...'}
-        slabRate={billing?.current_slab_rate || 0}
+        slabName={activeSlab.rate === 0 ? 'Free' : `Slab ${activeSlab.num}`}
+        slabRate={activeSlab.rate}
       />
 
       {/* TABS + DATE NAVIGATOR */}
@@ -442,21 +696,37 @@ export default function Energy() {
       </div>
 
       {/* SUMMARY METRICS */}
-      <div className="e-section-lbl">{d.label} · 6 AM – 6 AM</div>
+      {/* Fix 3: show '6 AM – now' for the live/active date, '6 AM – 6 AM' for past dates */}
+      <div className="e-section-lbl">{d.label} · {isLiveDate ? '6 AM – now' : '6 AM – 6 AM'}</div>
       <div className="e-mgrid">
         <div className="e-metric">
           <div className="e-m-lbl">Measured</div>
           <div><span className="e-m-val">{d.kwh.toFixed(1)}</span><span className="e-m-unit">kWh</span></div>
           <div className="e-m-sub" style={{ marginTop: 5 }}>
-            {cmpStatus === 'highest' && <span className="e-badge" style={{ background: 'var(--Rbg)', color: 'var(--Rm)', fontSize: 10 }}>↑ highest this week</span>}
-            {cmpStatus === 'below' && <span className="e-badge" style={{ background: 'var(--Gbg)', color: 'var(--G)', fontSize: 10 }}>↓ below average</span>}
-            {cmpStatus === 'average' && <span className="e-badge" style={{ background: 'var(--Abg)', color: 'var(--Am)', fontSize: 10 }}>— near average</span>}
+            {badge && (
+              <>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 20,
+                  background: badge.bg, color: badge.color,
+                }}>
+                  {badge.icon} {badge.label}
+                </span>
+                <div style={{ fontSize: 10, color: 'var(--tx3)', marginTop: 3 }}>
+                  {viewMode === 'Daily' && 'typical: 9–12 kWh/day'}
+                  {viewMode === 'Weekly' && _lastWeekKwh > 0 && `last week: ${_lastWeekKwh.toFixed(1)} kWh`}
+                  {viewMode === 'Billing Cycle' && _cycleDailyAvg > 0 && `avg ${_cycleDailyAvg.toFixed(1)} kWh/day since ${startFmt}`}
+                </div>
+              </>
+            )}
           </div>
         </div>
         <div className="e-metric">
           <div className="e-m-lbl">Est. full home</div>
           <div><span className="e-m-val">{d.est.toFixed(1)}</span><span className="e-m-unit">kWh</span></div>
-          <div className="e-m-sub" style={{ color: 'var(--tx3)' }}>60% coverage</div>
+          <div className="e-m-sub" style={{ color: 'var(--tx3)' }}>
+            {viewMode === 'Daily' ? `${(dailyCoverage * 100).toFixed(0)}% coverage` : '60% coverage'}
+          </div>
         </div>
         <div className="e-metric">
           <div className="e-m-lbl">Cost today</div>
@@ -464,9 +734,25 @@ export default function Energy() {
           <div className="e-m-sub" style={{ color: 'var(--tx3)' }}>{d.costSub}</div>
         </div>
         <div className="e-metric">
-          <div className="e-m-lbl">Top runtime</div>
-          <div className="e-m-val" style={{ fontSize: 18, marginTop: 1 }}>{d.runtime}</div>
-          <div className="e-m-sub" style={{ color: 'var(--tx3)' }}>AC · 1st Floor</div>
+          <div className="e-m-lbl">TOP DEVICE</div>
+          <div className="e-m-val" style={{ fontSize: 14, fontWeight: 500, marginTop: 1, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {viewMode === 'Daily' ? (topDevice ? topDevice.name : '—') : 'AC - 1st Floor'}
+          </div>
+          <div className="e-m-sub" style={{ color: 'var(--tx2)', fontSize: 11, marginTop: 2, display: 'flex', flexDirection: 'column' }}>
+            {viewMode === 'Daily' ? (
+              topDevice ? (
+                <>
+                  <span>{fmt(topDevice.minutes)}</span>
+                  <span>{parseFloat(topDevice.kwh).toFixed(2)} kWh</span>
+                </>
+              ) : '—'
+            ) : (
+              <>
+                <span>14h 10m</span>
+                <span>10.09 kWh</span>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -553,189 +839,277 @@ export default function Energy() {
         selectedDate={selectedDateStr}
       />
 
-      {/* BILLING CYCLE */}
+      {/* BILLING CYCLE (Premium Slab Card matching Home.jsx) */}
       <div className="e-section-lbl">Billing cycle · TNEB LA1A</div>
-      <div className="e-card">
-        <div className="e-row" style={{ marginBottom: 2 }}>
-          <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{startFmt} – {endFmt}</span>
-          <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{daysLeft > 0 ? `${daysLeft} days left` : 'Cycle ended'}</span>
-        </div>
+      <div className="e-card" style={{ padding: '16px 16px' }}>
+        {(() => {
+          const measuredUnits = parseFloat(billing?.kwh_accumulated ?? 0)
+          const estimatedUnits = parseFloat(billing?.kwh_estimated ?? 0)
 
-        {/* Progress Bar */}
-        <div className="mb-9 mt-4 px-1">
-          <div style={{ position: 'relative', height: 10, borderRadius: 5, background: 'rgba(0,0,0,0.05)', overflow: 'visible' }}>
-            <div style={{ display: 'flex', height: '100%', borderRadius: 5, overflow: 'hidden' }}>
-              {[
-                { num: 1, units: 100, min: 1, max: 100, color: '#1D9E75' },
-                { num: 2, units: 100, min: 101, max: 200, color: '#EF9F27' },
-                { num: 3, units: 200, min: 201, max: 400, color: '#E24B4A' },
-                { num: 4, units: 100, min: 401, max: 500, color: '#534AB7' },
-              ].map(s => {
-                const est = billing?.kwh_estimated || 0;
-                return (
-                  <div key={s.num} style={{
-                    width: `${(s.units / 500) * 100}%`,
-                    background: est >= s.min ? s.color : 'rgba(0,0,0,0.1)',
-                    opacity: est >= s.min ? 1 : 0.2
-                  }} />
-                )
-              })}
-            </div>
-            <div style={{ position: 'absolute', top: -3, left: `${Math.min(((billing?.kwh_accumulated || 0) / 500) * 100, 100)}%`, width: 2, height: 16, background: '#333', borderRadius: 1, transform: 'translateX(-50%)', zIndex: 10 }} />
-            <div style={{ position: 'absolute', top: 14, left: `${Math.min(((billing?.kwh_accumulated || 0) / 500) * 100, 100)}%`, transform: 'translateX(-50%)', fontSize: 9, fontWeight: 'bold', color: '#666', whiteSpace: 'nowrap' }}>
-              {(billing?.kwh_accumulated || 0).toFixed(0)} measured
-            </div>
-            <div style={{ position: 'absolute', top: -8, left: `${Math.min(((billing?.kwh_estimated || 0) / 500) * 100, 100)}%`, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '8px solid #333', transform: 'translateX(-50%)' }} />
-          </div>
-        </div>
+          const isAbove500    = estimatedUnits > 500
+          const currentSlab   = getCurrentSlab(estimatedUnits)
+          const estimatedBill = calculateTNEBBill(estimatedUnits)
+          const unitsLeftInSlab = currentSlab.max >= 99999
+            ? null
+            : Math.max(0, currentSlab.max - estimatedUnits)
 
-        <div className="flex justify-between items-end mb-4">
-          <div>
-            <div className="text-[11px] text-tx-3 mb-0.5">
-              {(billing?.kwh_accumulated || 0).toFixed(0)} measured · {(billing?.kwh_estimated || 0).toFixed(0)} est. total
-            </div>
-            <div className="text-[13px] font-bold text-tx">
-              {(billing?.kwh_estimated || 0).toFixed(0)} units used · {(() => {
-                const est = billing?.kwh_estimated || 0;
-                const SLABS = [
-                  { num: 1, min: 1, max: 100 },
-                  { num: 2, min: 101, max: 200 },
-                  { num: 3, min: 201, max: 400 },
-                  { num: 4, min: 401, max: 500 },
-                ];
-                const current = SLABS.find(s => est >= s.min && est <= s.max) ?? (est > 500 ? SLABS[3] : SLABS[0]);
-                const left = Math.max(0, current.max - est);
-                return left > 0 ? `${left.toFixed(0)} units left in Slab ${current.num}` : `Reached end of Slab ${current.num}`;
-              })()}
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-[10px] text-tx-3 uppercase font-bold tracking-wider">Est. Bill</div>
-            <div className="text-xl font-bold text-tx">₹{(() => {
-              const est = billing?.kwh_estimated || 0;
-              const SLABS = [
-                { min: 1, max: 100, rate: 0 },
-                { min: 101, max: 200, rate: 2.35 },
-                { min: 201, max: 400, rate: 4.70 },
-                { min: 401, max: 500, rate: 6.30 },
-              ];
-              let bill = 0;
-              SLABS.forEach(s => {
-                if (est >= s.min) {
-                  const unitsInSlab = Math.min(est, s.max) - s.min + 1;
-                  bill += unitsInSlab * s.rate;
-                }
-              });
-              return Math.round(bill).toLocaleString();
-            })()}</div>
-          </div>
-        </div>
+          const cycleStart = billing?.cycle_start ? new Date(billing.cycle_start) : null
+          const cycleEnd   = billing?.cycle_end   ? new Date(billing.cycle_end)   : null
+          const today      = new Date()
 
-        <div className="grid grid-cols-4 gap-2 mb-4">
-          {[
-            { num: 1, label: 'Free', min: 1, max: 100, rate: 0, color: '#1D9E75' },
-            { num: 2, label: '₹2.35', min: 101, max: 200, rate: 2.35, color: '#EF9F27' },
-            { num: 3, label: '₹4.70', min: 201, max: 400, rate: 4.70, color: '#E24B4A' },
-            { num: 4, label: '₹6.30', min: 401, max: 500, rate: 6.30, color: '#534AB7' },
-          ].map((s) => {
-            const est = billing?.kwh_estimated || 0;
-            const isSlabNow = est >= s.min && est <= s.max || (s.num === 4 && est > 500);
-            const isSlabDone = est > s.max;
-            const left = Math.max(0, s.max - est);
+          const dLeft    = cycleEnd ? Math.max(0, Math.ceil((cycleEnd - today) / (1000 * 60 * 60 * 24))) : 0
+          const dElapsed = cycleStart ? Math.max(1, Math.ceil((today - cycleStart) / (1000 * 60 * 60 * 24))) : 1
+          const pace     = measuredUnits / dElapsed
+          const projectedTotal = measuredUnits + (pace * dLeft)
 
-            return (
-              <div key={s.num} className={`rounded-xl py-2.5 px-1 text-center border-[1.5px] transition-all ${isSlabNow ? '' : 'opacity-60'}`}
-                style={{ background: isSlabNow ? s.color + '10' : (isSlabDone ? s.color + '05' : 'transparent'), borderColor: isSlabNow ? s.color : 'rgba(0,0,0,0.05)' }}>
-                <div className="text-[9px] font-bold uppercase tracking-wider mb-0.5" style={{ color: s.color }}>Slab {s.num}</div>
-                <div className="text-[13px] font-bold text-tx">{s.label}</div>
-                <div className="text-[8px] text-tx-3 mb-1">{s.min}–{s.max} units</div>
-                <div className="text-[9px] font-bold" style={{ color: (isSlabNow || isSlabDone) ? s.color : '#A8A59E' }}>
-                  {isSlabNow ? `Now · ${left.toFixed(0)} left` : (isSlabDone ? 'Done ✓' : 'Soon')}
+          const TOTAL_BAR = isAbove500 ? 1000 : 500
+          const measuredPct  = Math.min((measuredUnits  / TOTAL_BAR) * 100, 100)
+          const estimatedPct = Math.min((estimatedUnits / TOTAL_BAR) * 100, 100)
+          const activeSlabs  = getSlabs(estimatedUnits)
+
+          // ── Case 1 tip (below 500) ─────────────────────────────────────────────────
+          let normalTip = ''
+          if (!isAbove500) {
+            if (currentSlab.num === 4 && unitsLeftInSlab > 0) {
+              normalTip = `Est. total ${estimatedUnits.toFixed(0)} units — ${unitsLeftInSlab.toFixed(0)} units before Slab 4 limit (500 units). At ₹6.30/unit after 400 units.`
+            } else if (currentSlab.num < 4 && projectedTotal > currentSlab.max) {
+              const crossDate = new Date(today)
+              const dToNext = pace > 0 ? Math.ceil((currentSlab.max - measuredUnits) / pace) : 0
+              crossDate.setDate(today.getDate() + dToNext)
+              const nextSlab = SLABS_BELOW_500[currentSlab.num]
+              normalTip = `At this rate you'll enter Slab ${nextSlab.num} (₹${nextSlab.rate}/unit) around ${crossDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}. Reduce AC by 1–2 hrs/day to stay in Slab ${currentSlab.num}.`
+            } else {
+              normalTip = `On track. Est. to finish cycle at ${projectedTotal.toFixed(0)} units — staying in Slab ${currentSlab.num} (₹${currentSlab.rate}/unit).`
+            }
+          }
+
+          // Next slab for above-500 warning banner
+          const nextSlabAbove = isAbove500
+            ? SLABS_ABOVE_500.find(s => s.num === currentSlab.num + 1) ?? null
+            : null
+
+          return (
+            <>
+              {/* Header row */}
+              <div className="e-row" style={{ marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'var(--tx2)' }}>{startFmt} – {endFmt}</span>
+                <span className="badge text-[10px] font-bold" style={{ background: currentSlab.color + '18', color: currentSlab.color, padding: '3px 8px', borderRadius: 12 }}>
+                  Slab {currentSlab.num} · {currentSlab.rate === 0 ? 'Free' : `₹${currentSlab.rate}/unit`}
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div style={{ marginBottom: 36, marginTop: 16, paddingLeft: 4, paddingRight: 4 }}>
+                <div style={{ position: 'relative', height: 10, borderRadius: 5, background: 'rgba(0,0,0,0.05)', overflow: 'visible' }}>
+                  <div style={{ display: 'flex', height: '100%', borderRadius: 5, overflow: 'hidden' }}>
+                    {activeSlabs.map(s => {
+                      const slabUnits = Math.min(s.max, TOTAL_BAR) - s.min + 1
+                      const widthPct  = (Math.min(slabUnits, TOTAL_BAR) / TOTAL_BAR) * 100
+                      return (
+                        <div key={s.num} style={{
+                          width: `${widthPct}%`,
+                          background: estimatedUnits >= s.min ? s.color : 'rgba(0,0,0,0.1)',
+                          opacity: estimatedUnits >= s.min ? 1 : 0.2,
+                          flexShrink: 0,
+                        }} />
+                      )
+                    })}
+                  </div>
+                  {/* Measured marker */}
+                  <div style={{ position: 'absolute', top: -3, left: `${measuredPct}%`, width: 2, height: 16, background: '#333', borderRadius: 1, transform: 'translateX(-50%)', zIndex: 10 }} />
+                  <div style={{ position: 'absolute', top: 14, left: `${measuredPct}%`, transform: 'translateX(-50%)', fontSize: 9, fontWeight: 700, color: '#666', whiteSpace: 'nowrap' }}>
+                    {measuredUnits.toFixed(0)} measured
+                  </div>
+                  {/* Estimated triangle */}
+                  <div style={{ position: 'absolute', top: -8, left: `${estimatedPct}%`, width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '8px solid #333', transform: 'translateX(-50%)' }} />
                 </div>
               </div>
-            )
-          })}
-        </div>
 
-        <div className="bg-surface-2 rounded-xl p-3 border border-black/5 mb-4">
-          <div className="flex items-center gap-2 mb-1.5">
-            <div className="w-5 h-5 rounded-full bg-brand-yellow/20 flex items-center justify-center">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D4880A" strokeWidth="2.5"><path d="M12 2v1M12 21v1M4.22 4.22l.71.71M18.36 18.36l.71.71M2 12h1M21 12h1M4.22 19.78l.71-.71M18.36 5.64l.71-.71M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z" /></svg>
-            </div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-tx-2">Savings Insight</span>
-          </div>
-          <p className="text-xs text-tx-2 leading-relaxed">
-            {(() => {
-              const est = billing?.kwh_estimated || 0;
-              const meas = billing?.kwh_accumulated || 0;
-              const SLABS = [
-                { num: 1, min: 1, max: 100, rate: 0 },
-                { num: 2, min: 101, max: 200, rate: 2.35 },
-                { num: 3, min: 201, max: 400, rate: 4.70 },
-                { num: 4, min: 401, max: 500, rate: 6.30 },
-              ];
-              const current = SLABS.find(s => est >= s.min && est <= s.max) ?? (est > 500 ? SLABS[3] : SLABS[0]);
-              const left = Math.max(0, current.max - est);
-              
-              const cycleEnd = new Date(billing?.cycle_end)
-              const today = new Date()
-              const dLeft = Math.max(0, Math.ceil((cycleEnd - today) / (1000*60*60*24)))
-              const cycleStart = new Date(billing?.cycle_start)
-              const dElapsed = Math.max(1, Math.ceil((today - cycleStart) / (1000*60*60*24)))
-              const pace = meas / dElapsed
-              const projected = meas + (pace * dLeft)
+              {/* Stats row */}
+              <div className="flex justify-between items-end mb-4">
+                <div>
+                  <div className="text-[11px] text-tx-3 mb-0.5">
+                    {measuredUnits.toFixed(0)} measured · {estimatedUnits.toFixed(0)} est. total
+                  </div>
+                  <div className="text-[13px] font-bold text-tx">
+                    {estimatedUnits.toFixed(0)} units ·{' '}
+                    {unitsLeftInSlab !== null && unitsLeftInSlab > 0
+                      ? `${unitsLeftInSlab.toFixed(0)} left in Slab ${currentSlab.num}`
+                      : unitsLeftInSlab === 0
+                        ? `Reached end of Slab ${currentSlab.num}`
+                        : `In final slab`}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] text-tx-3 uppercase font-bold tracking-wider">Est. Bill</div>
+                  <div className="text-xl font-bold text-tx">₹{estimatedBill.toLocaleString()}</div>
+                </div>
+              </div>
 
-              if (current.num === 4 && left > 0) {
-                return `Est. total ${est.toFixed(0)} units — ${left.toFixed(0)} units before Slab 4 limit (500 units). At ₹6.30/unit after 400 units.`
-              } else if (current.num < 4 && projected > current.max) {
-                const crossDate = new Date(today)
-                const dToNext = Math.ceil((current.max - meas) / pace)
-                crossDate.setDate(today.getDate() + dToNext)
-                const nextSlab = SLABS[current.num]
-                return `At this rate you'll enter Slab ${nextSlab.num} (₹${nextSlab.rate}/unit) around ${crossDate.toLocaleDateString('en-IN', {day:'numeric', month:'short'})}. Reduce AC by 1–2 hrs/day to stay in Slab ${current.num}.`
-              } else {
-                return `On track. Est. to finish cycle at ${projected.toFixed(0)} units — staying in Slab ${current.num} (₹${current.rate}/unit).`
-              }
-            })()}
-          </p>
-        </div>
+              {/* CASE 1 — Below 500: 4-card horizontal grid */}
+              {!isAbove500 && (
+                <>
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    {SLABS_BELOW_500.map(s => {
+                      const isNow  = s.num === currentSlab.num
+                      const isDone = estimatedUnits > s.max
+                      return (
+                        <div key={s.num}
+                          className={`rounded-xl py-2.5 px-1 text-center border-[1.5px] transition-all ${isNow ? '' : 'opacity-60'}`}
+                          style={{
+                            background: isNow ? s.color + '10' : isDone ? s.color + '05' : 'transparent',
+                            borderColor: isNow ? s.color : 'rgba(0,0,0,0.05)',
+                          }}>
+                          <div className="text-[9px] font-bold uppercase tracking-wider mb-0.5" style={{ color: s.color }}>
+                            Slab {s.num}
+                          </div>
+                          <div className="text-[13px] font-bold text-tx">{s.label}</div>
+                          <div className="text-[8px] text-tx-3 mb-1">{s.min}–{s.max} units</div>
+                          <div className="text-[9px] font-bold" style={{ color: (isNow || isDone) ? s.color : '#A8A59E' }}>
+                            {isNow
+                              ? `Now · ${(unitsLeftInSlab ?? 0).toFixed(0)} left`
+                              : isDone ? 'Done ✓' : 'Soon'}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
 
-        <div className="e-proj-row">
-          <div className="e-prc" style={{ background: 'var(--s2)' }}>
-            <div className="e-prc-lbl">Cycle so far</div>
-            <div className="e-prc-val">{(billing?.kwh_accumulated || 0).toFixed(1)} kWh</div>
-          </div>
-          <div className="e-prc" style={{ background: 'var(--Rbg)' }}>
-            <div className="e-prc-lbl" style={{ color: 'var(--Rm)' }}>Projected end</div>
-            <div className="e-prc-val" style={{ color: 'var(--Rm)' }}>~{(billing?.kwh_estimated || 0).toFixed(0)} kWh</div>
-          </div>
-          <div className="e-prc" style={{ background: 'var(--s2)' }}>
-            <div className="e-prc-lbl">Bill est.</div>
-            <div className="e-prc-val">₹{(() => {
-              const est = billing?.kwh_estimated || 0;
-              const SLABS = [{min:1,max:100,rate:0},{min:101,max:200,rate:2.35},{min:201,max:400,rate:4.70},{min:401,max:500,rate:6.30}];
-              let bill = 0;
-              SLABS.forEach(s => { if (est >= s.min) { const unitsInSlab = Math.min(est, s.max) - s.min + 1; bill += unitsInSlab * s.rate; } });
-              return Math.round(bill).toLocaleString();
-            })()}</div>
-          </div>
-        </div>
+                  {/* Savings insight tip */}
+                  <div className="bg-surface-2 rounded-xl p-3 border border-black/5 mb-3">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="w-5 h-5 rounded-full bg-brand-yellow/20 flex items-center justify-center">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D4880A" strokeWidth="2.5">
+                          <path d="M12 2v1M12 21v1M4.22 4.22l.71.71M18.36 18.36l.71.71M2 12h1M21 12h1M4.22 19.78l.71-.71M18.36 5.64l.71-.71M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z" />
+                        </svg>
+                      </div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-tx-2">Savings Insight</span>
+                    </div>
+                    <p className="text-xs text-tx-2 leading-relaxed">{normalTip}</p>
+                  </div>
+                </>
+              )}
 
-        <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 8, lineHeight: 1.5 }}>
-          Based on {((billing?.kwh_accumulated || 0) / cycleDay).toFixed(1)} kWh/day avg · Slab crossing predicted <strong style={{ color: 'var(--Rm)' }}>{(() => {
-            const meas = billing?.kwh_accumulated || 0;
-            const cycleStart = new Date(billing?.cycle_start)
-            const dElapsed = Math.max(1, Math.ceil((new Date() - cycleStart) / (1000*60*60*24)))
-            const pace = meas / dElapsed
-            const SLABS = [{max:100},{max:200},{max:400},{max:500}];
-            const est = billing?.kwh_estimated || 0;
-            const current = SLABS.find(s => est <= s.max) || SLABS[3];
-            const dToNext = Math.ceil((current.max - meas) / pace);
-            const crossDate = new Date();
-            crossDate.setDate(crossDate.getDate() + dToNext);
-            return crossDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-          })()}</strong>
-        </div>
+              {/* CASE 2 — Above 500: 7-row vertical list */}
+              {isAbove500 && (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '4px 0 12px' }}>
+                    {SLABS_ABOVE_500.map(slab => {
+                      const isDone   = estimatedUnits > slab.max
+                      const isActive = currentSlab.num === slab.num
+                      const isFuture = estimatedUnits < slab.min
+                      const unitsInSlab = isDone
+                        ? slab.max - slab.min + 1
+                        : isActive
+                          ? Math.round(estimatedUnits - slab.min + 1)
+                          : 0
+                      const slabUnitsLeft = slab.max >= 99999 ? null : Math.max(0, slab.max - estimatedUnits)
+
+                      return (
+                        <div key={slab.num} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          borderRadius: 10,
+                          background: isActive ? slab.color + '15' : 'var(--s2, #F0EDE7)',
+                          border: `1px solid ${isActive ? slab.color + '40' : 'rgba(0,0,0,0.06)'}`,
+                          opacity: isFuture ? 0.4 : 1,
+                          transition: 'all 0.2s',
+                        }}>
+                          <div style={{ width: 10, height: 10, borderRadius: '50%', background: slab.color, flexShrink: 0 }} />
+
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--tx, #1A1916)' }}>
+                              Slab {slab.num} · {slab.label}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--tx3, #A8A59E)' }}>
+                              {slab.min}–{slab.max >= 99999 ? `${slab.min - 1}+` : slab.max} units
+                            </div>
+                          </div>
+
+                          {(isDone || isActive) && (
+                            <div style={{ fontSize: 12, color: 'var(--tx2, #6B6860)', textAlign: 'right', minWidth: 56 }}>
+                              {unitsInSlab} units
+                            </div>
+                          )}
+
+                          <div style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: '2px 8px',
+                            borderRadius: 20,
+                            whiteSpace: 'nowrap',
+                            background: isDone   ? '#EAF3DE'
+                                      : isActive  ? slab.color + '25'
+                                      :             'rgba(0,0,0,0.05)',
+                            color: isDone   ? '#27500A'
+                                 : isActive  ? slab.color
+                                 :             'var(--tx3, #A8A59E)',
+                          }}>
+                            {isDone
+                              ? 'Done ✓'
+                              : isActive
+                                ? slabUnitsLeft !== null
+                                  ? `Now · ${slabUnitsLeft.toFixed(0)} left`
+                                  : 'Now'
+                                : 'Upcoming'}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Warning banner */}
+                  <div style={{
+                    background: '#FAEEDA',
+                    border: '1px solid #EF9F27',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    fontSize: 13,
+                    color: '#633806',
+                    lineHeight: 1.5,
+                    marginTop: 4,
+                    marginBottom: 10
+                  }}>
+                    ⚠ You've crossed 500 units — your entire bill is recalculated at higher rates.
+                    Currently in Slab {currentSlab.num} at ₹{currentSlab.rate}/unit.
+                    {unitsLeftInSlab !== null && unitsLeftInSlab > 0 && nextSlabAbove && (
+                      <span> {unitsLeftInSlab.toFixed(0)} units before next slab (₹{nextSlabAbove.rate}/unit).</span>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Extra stats row */}
+              <div className="e-proj-row" style={{ marginTop: 8 }}>
+                <div className="e-prc" style={{ background: 'var(--s2)' }}>
+                  <div className="e-prc-lbl">Cycle so far</div>
+                  <div className="e-prc-val">{measuredUnits.toFixed(1)} kWh</div>
+                </div>
+                <div className="e-prc" style={{ background: 'var(--Rbg)' }}>
+                  <div className="e-prc-lbl" style={{ color: 'var(--Rm)' }}>Projected end</div>
+                  <div className="e-prc-val" style={{ color: 'var(--Rm)' }}>~{estimatedUnits.toFixed(0)} kWh</div>
+                </div>
+                <div className="e-prc" style={{ background: 'var(--s2)' }}>
+                  <div className="e-prc-lbl">Bill est.</div>
+                  <div className="e-prc-val">₹{estimatedBill.toLocaleString()}</div>
+                </div>
+              </div>
+
+              {/* Footer predictions */}
+              <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 10, lineHeight: 1.5 }}>
+                Based on {(measuredUnits / Math.max(1, cycleDay)).toFixed(1)} kWh/day avg · Slab crossing predicted <strong style={{ color: 'var(--Rm)' }}>{(() => {
+                  const currentMax = currentSlab.max >= 99999 ? 500 : currentSlab.max
+                  const dToNext = pace > 0 ? Math.ceil((currentMax - measuredUnits) / pace) : 0
+                  const crossDate = new Date()
+                  crossDate.setDate(crossDate.getDate() + dToNext)
+                  return crossDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+                })()}</strong>
+              </div>
+            </>
+          )
+        })()}
       </div>
 
       <div className="e-section-lbl" id="insight-lbl">Today's insight · {d.label}</div>

@@ -30,6 +30,7 @@ export default function EnergyGraph({ viewMode, householdId, cycleStart, cycleEn
   }, [viewMode, householdId, selectedDate, cycleStart, cycleEnd, billingSubMode])
 
   async function fetchGraphData() {
+    if (!householdId) return
     setLoading(true)
     try {
       if (viewMode === 'Daily') {
